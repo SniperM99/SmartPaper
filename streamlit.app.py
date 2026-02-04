@@ -17,6 +17,7 @@ from core.smart_paper_core import SmartPaper
 from core.prompt_manager import list_prompts
 from typing import List, Dict
 import sys
+import time
 import uuid  # 用于生成用户唯一ID
 import traceback  # 用于打印完整的错误栈
 
@@ -313,22 +314,119 @@ def main():
         hm = HistoryManager()
         history = hm.list_history()
         
+        hm = HistoryManager()
+        history = hm.list_history()
+        
         if history:
-            # 转换为DataFrame显示
-            df = pd.DataFrame(history)
+            # --- 删除确认区域 ---
+            if "delete_confirm_key" in st.session_state:
+                 confirm_key = st.session_state.delete_confirm_key
+                 # 查找对应的文件以便显示提示
+                 entry_to_del = next((item for item in history if item["cache_key"] == confirm_key), None)
+                 fname = entry_to_del['file_name'] if entry_to_del else "该记录"
+                 
+                 st.warning(f"⚠️ 确定要删除记录: {fname} 吗？(如果是本地文件，同时也会删除结果文件)")
+                 col_conf_1, col_conf_2, col_conf_3 = st.columns([0.1, 0.1, 0.8])
+                 with col_conf_1:
+                     if st.button("✅ 确认", key="btn_confirm_del"):
+                         if hm.delete_history_item(confirm_key, delete_file=True):
+                                st.success("已删除")
+                                del st.session_state.delete_confirm_key
+                                time.sleep(0.5)
+                                st.rerun()
+                         else:
+                                st.error("删除失败")
+                 with col_conf_2:
+                     if st.button("❌ 取消", key="btn_cancel_del"):
+                         del st.session_state.delete_confirm_key
+                         st.rerun()
+                 st.markdown("---")
+
+            # 简单的统计信息
+            st.caption(f"共找到 {len(history)} 条记录")
             
-            # 格式化显示列
-            display_df = df[["timestamp", "prompt_name", "original_source", "file_name"]].copy()
-            display_df["timestamp"] = pd.to_datetime(display_df["timestamp"], unit='s').dt.strftime('%Y-%m-%d %H:%M:%S')
+            # 表头
+            cols = st.columns([0.2, 0.15, 0.45, 0.1, 0.1])
+            cols[0].markdown("**分析时间**")
+            cols[1].markdown("**匹配模板**")
+            cols[2].markdown("**来源 (点击打开)**")
+            cols[3].markdown("**查看解析**")
+            cols[4].markdown("**删除记录**")
+            st.markdown("---")
             
-            # 重命名列
-            display_df.columns = ["时间", "提示词模板", "来源", "结果文件"]
+            for idx, entry in enumerate(history):
+                cols = st.columns([0.2, 0.15, 0.45, 0.1, 0.1])
+                
+                # 时间
+                ts = pd.to_datetime(entry['timestamp'], unit='s').strftime('%m-%d %H:%M')
+                cols[0].text(ts)
+                
+                # 模板
+                prompt_name = entry['prompt_name']
+                if len(prompt_name) > 10: prompt_name = prompt_name[:8] + ".."
+                cols[1].text(prompt_name)
+                
+                # 来源（按钮形式）
+                source_name = entry['file_name'] or os.path.basename(entry['original_source'])
+                full_source_path = entry.get('original_source', '')
+                
+                # 按钮 Label 处理
+                btn_label = source_name
+                if len(btn_label) > 35:
+                    btn_label = btn_label[:15] + "..." + btn_label[-15:]
+                
+                with cols[2]:
+                    # 检查是否是本地存在的文件
+                    is_local = full_source_path and os.path.exists(full_source_path)
+                    help_text = f"路径: {full_source_path}" if is_local else "未知路径或远程URL"
+                    
+                    if st.button(f"📄 {btn_label}", key=f"open_src_{entry['cache_key']}", help=help_text, disabled=not is_local):
+                        try:
+                            import subprocess
+                            # macOS 使用 open
+                            subprocess.run(["open", full_source_path], check=True)
+                            st.toast(f"正在打开: {source_name}")
+                        except Exception as e:
+                            st.error(f"打开失败: {e}")
+
+                # 查看按钮
+                with cols[3]:
+                    if st.button("👁️", key=f"view_{entry['cache_key']}"):
+                        # 读取内容
+                        file_path = entry['file_path']
+                        if os.path.exists(file_path):
+                            with open(file_path, "r", encoding="utf-8") as f:
+                                content = f.read()
+                            st.session_state.viewing_content = {
+                                "title": source_name,
+                                "content": content
+                            }
+                            st.rerun()
+                        else:
+                            st.error("缺失")
+
+                # 删除按钮
+                with cols[4]:
+                     if st.button("🗑️", key=f"pre_del_{entry['cache_key']}"):
+                         st.session_state.delete_confirm_key = entry['cache_key']
+                         st.rerun()
+
+            st.markdown("---")
             
-            st.dataframe(display_df, width="stretch", hide_index=True)
+            # 显示查看的内容 (放在列表下方)
+            if "viewing_content" in st.session_state:
+                st.info(f"正在预览: {st.session_state.viewing_content['title']}")
+                with st.expander("📄 分析结果详情", expanded=True):
+                    st.markdown(st.session_state.viewing_content['content'])
+                    if st.button("关闭预览", type="primary"):
+                        del st.session_state.viewing_content
+                        st.rerun()
             
-            st.info("提示：详细内容请在上方通过输入相同的URL或上传文件来查看已缓存的分析结果。")
-            if st.button("关闭历史记录"):
+            # 关闭历史记录按钮
+            if st.button("收起历史记录"):
                 st.session_state.show_history = False
+                if "viewing_content" in st.session_state:
+                     del st.session_state.viewing_content
                 st.rerun()
         else:
             st.info("暂无历史记录")

@@ -163,6 +163,34 @@ class HistoryManager:
             logger.error(f"保存分析结果失败: {e}")
             raise e
 
+    def delete_history_item(self, cache_key: str, delete_file: bool = True) -> bool:
+        """删除历史记录条目
+        
+        Args:
+            cache_key (str): 缓存键
+            delete_file (bool): 是否同时删除物理文件
+            
+        Returns:
+            bool: 是否成功删除
+        """
+        if cache_key in self.history_index:
+            entry = self.history_index[cache_key]
+            
+            if delete_file:
+                file_path = os.path.join(self.storage_dir, entry.get("file_name", ""))
+                if os.path.exists(file_path):
+                    try:
+                        os.remove(file_path)
+                        logger.info(f"已删除物理文件: {file_path}")
+                    except Exception as e:
+                        logger.error(f"删除物理文件失败: {e}")
+            
+            del self.history_index[cache_key]
+            self._save_index()
+            logger.info(f"已删除历史索引: {cache_key}")
+            return True
+        return False
+
     def list_history(self) -> list:
         """获取所有历史记录列表
 
@@ -173,6 +201,7 @@ class HistoryManager:
         for key, entry in self.history_index.items():
             # 确保包含必要字段
             item = {
+                "cache_key": key,
                 "original_source": entry.get("original_source", "Unknown"),
                 "prompt_name": entry.get("prompt_name", "Unknown"),
                 "timestamp": entry.get("timestamp", 0),

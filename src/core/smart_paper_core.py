@@ -333,7 +333,7 @@ class SmartPaper:
             cached_result = self.history_manager.get_analysis(source_hash, prompt_name or "default")
             
             if cached_result:
-                yield "✨ 命中缓存，加载历史分析结果... ✨\n\n"
+                # yield "✨ 命中缓存，加载历史分析结果... ✨\n\n"
                 yield cached_result["content"]
                 return
 
@@ -400,7 +400,7 @@ class SmartPaper:
             cached_result = self.history_manager.get_analysis(source_hash, prompt_name or "default")
             
             if cached_result:
-                yield "✨ 命中缓存，加载历史分析结果... ✨\n\n"
+                # yield "✨ 命中缓存，加载历史分析结果... ✨\n\n"
                 yield cached_result["content"]
                 return
 
