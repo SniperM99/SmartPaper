@@ -17,7 +17,7 @@ pandas>=2.1.4
 python-dotenv>=1.0.0
 arxiv>=2.0.0
 tqdm>=4.66.1
-markitdown
+markitdown[pdf]
 loguru
 
 # 开发依赖
