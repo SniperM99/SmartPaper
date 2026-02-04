@@ -6,6 +6,7 @@ import requests
 
 from core.llm_wrapper import LLMWrapper
 from core.document_converter import convert_to_text
+from core.history_manager import HistoryManager
 from utils.output_formatter import OutputFormatter
 from loguru import logger
 
@@ -35,6 +36,7 @@ class SmartPaper:
         # 初始化组件
         self.processor: LLMWrapper = LLMWrapper(self.config)
         self.output_formatter: OutputFormatter = OutputFormatter(self.config["output"])
+        self.history_manager = HistoryManager()
         logger.info("初始化组件完成")
 
         # 设置输出格式
@@ -66,6 +68,19 @@ class SmartPaper:
             Dict: 处理结果
         """
         try:
+            # 检查缓存
+            input_source = file_path
+            source_hash = self.history_manager.compute_hash(input_source, is_file=True)
+            cached_result = self.history_manager.get_analysis(source_hash, prompt_name or "default")
+            
+            if cached_result:
+                logger.info("命中缓存，直接返回历史分析结果")
+                return self.output_formatter.format(
+                    content=cached_result["content"], 
+                    metadata=cached_result["metadata"], 
+                    format=self.output_format
+                )
+
             # 转换PDF，使用配置中指定的转换器
             converter_name = self.config.get("document_converter", {}).get(
                 "converter_name", "markitdown"
@@ -75,6 +90,15 @@ class SmartPaper:
 
             # 使用提示词模式处理
             analysis = self.processor.process_with_content(result["text_content"], prompt_name)
+
+            # 保存到历史记录
+            self.history_manager.save_analysis(
+                source=input_source,
+                source_hash=source_hash,
+                prompt_name=prompt_name or "default",
+                content=analysis,
+                metadata=result["metadata"]
+            )
 
             # 格式化输出
             output = self.output_formatter.format(
@@ -230,6 +254,19 @@ class SmartPaper:
             Dict: 处理结果
         """
         try:
+            # 检查缓存
+            input_source = url
+            source_hash = self.history_manager.compute_hash(input_source, is_file=False)
+            cached_result = self.history_manager.get_analysis(source_hash, prompt_name or "default")
+            
+            if cached_result:
+                logger.info("命中缓存，直接返回历史分析结果")
+                return self.output_formatter.format(
+                    content=cached_result["content"], 
+                    metadata=cached_result["metadata"], 
+                    format=self.output_format
+                )
+
             # 下载并转换PDF
             logger.info(f"开始处理论文URL: {url}")
             result = self.convert_url(url, description=description)
@@ -242,6 +279,15 @@ class SmartPaper:
             # 使用提示词模式处理
             analysis = self.processor.process_with_content(text_content, prompt_name)
             logger.info(f"分析完成")
+
+            # 保存到历史记录
+            self.history_manager.save_analysis(
+                source=input_source,
+                source_hash=source_hash,
+                prompt_name=prompt_name or "default",
+                content=analysis,
+                metadata=metadata
+            )
 
             # 格式化输出
             output = self.output_formatter.format(
@@ -273,6 +319,16 @@ class SmartPaper:
             Exception: 当处理失败时抛出异常
         """
         try:
+            # 检查缓存
+            input_source = url
+            source_hash = self.history_manager.compute_hash(input_source, is_file=False)
+            cached_result = self.history_manager.get_analysis(source_hash, prompt_name or "default")
+            
+            if cached_result:
+                yield "✨ 命中缓存，加载历史分析结果... ✨\n\n"
+                yield cached_result["content"]
+                return
+
             # 打印 metainfo 信息
             yield "✨ 元数据信息 ✨\n\n"
             yield f"📄 处理URL: {url}\n\n"
@@ -291,9 +347,21 @@ class SmartPaper:
 
             # 使用提示词模式处理
             yield "使用提示词模式进行分析...\n"
+            
+            full_analysis = ""
             # 使用流式接口处理
             for chunk in self.processor.process_stream_with_content(text_content, prompt_name):
+                full_analysis += chunk
                 yield chunk
+
+            # 保存到历史记录
+            self.history_manager.save_analysis(
+                source=input_source,
+                source_hash=source_hash,
+                prompt_name=prompt_name or "default",
+                content=full_analysis,
+                metadata=result["metadata"]
+            )
 
             logger.info(f"流式分析完成")
 
@@ -318,6 +386,16 @@ class SmartPaper:
             str: 流式输出的文本片段
         """
         try:
+            # 检查缓存
+            input_source = file_path
+            source_hash = self.history_manager.compute_hash(input_source, is_file=True)
+            cached_result = self.history_manager.get_analysis(source_hash, prompt_name or "default")
+            
+            if cached_result:
+                yield "✨ 命中缓存，加载历史分析结果... ✨\n\n"
+                yield cached_result["content"]
+                return
+
             yield "✨ 元数据信息 ✨\n\n"
             yield f"📄 处理文件: {file_path}\n\n"
             yield f"💡 提示词模板: {prompt_name if prompt_name else '默认'}\n\n"
@@ -338,8 +416,20 @@ class SmartPaper:
 
             # 使用提示词模式处理
             yield "使用提示词模式进行分析...\n"
+            
+            full_analysis = ""
             for chunk in self.processor.process_stream_with_content(text_content, prompt_name):
+                full_analysis += chunk
                 yield chunk
+
+            # 保存到历史记录
+            self.history_manager.save_analysis(
+                source=input_source,
+                source_hash=source_hash,
+                prompt_name=prompt_name or "default",
+                content=full_analysis,
+                metadata=result["metadata"]
+            )
 
             logger.info(f"流式分析完成")
 
