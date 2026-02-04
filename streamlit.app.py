@@ -537,10 +537,16 @@ def main():
             from core.history_manager import HistoryManager
             hm = HistoryManager()
             history = hm.list_history()
-            processed_files = set()
+            
+            # 构建已处理的文件名集合（从原始路径提取文件名）
+            processed_filenames = set()
             for entry in history:
-                if entry.get("file_name"):
-                    processed_files.add(entry["file_name"])
+                original_source = entry.get("original_source", "")
+                if original_source:
+                    # 尝试从路径或URL中提取文件名
+                    name = os.path.basename(original_source)
+                    if name:
+                        processed_filenames.add(name)
             
             for idx, file_path in enumerate(pdf_files):
                 status_text.text(f"正在处理 [{idx+1}/{total_files}]: {file_path.name}")
@@ -553,25 +559,8 @@ def main():
                     continue
 
                 # Check 2: Skip existing (by filename)
-                # 生成预期的文件名 (类似 process_paper 中的逻辑)
-                session_id = st.session_state.get("session_id", "default")
-                safe_name = "".join([c for c in file_path.name if c.isalpha() or c.isdigit() or c in ".-_"])
-                # 注意：这里我们简化判断，只要历史记录中有同名文件就跳过
-                # 如果需要更严格，可以结合prompt_name
-                
-                is_processed = False
-                # 简单检查文件名是否包含在已处理列表中 (模糊匹配)
-                # 更好的方式是检查 original_source 或者 file_name
-                # 这里我们遍历历史记录检查 original_source 是否匹配当前绝对路径
-                # 或者文件名是否匹配
-                
-                matched_history = None
-                for entry in history:
-                    if entry.get("file_name") and file_path.name in entry["file_name"]:
-                         matched_history = entry
-                         break
-                
-                if matched_history:
+                # 直接检查当前文件名是否在历史记录的文件名集合中
+                if file_path.name in processed_filenames:
                     logger.info(f"文件已存在于历史记录中，跳过: {file_path.name}")
                     results_summary.append(f"🔄 {file_path.name}: 已存在 (历史记录)")
                     progress_bar.progress((idx + 1) / total_files)
