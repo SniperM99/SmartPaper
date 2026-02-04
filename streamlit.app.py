@@ -298,6 +298,42 @@ def main():
     if "session_id" not in st.session_state:
         st.session_state.session_id = uuid.uuid4().hex
 
+    # 侧边栏：历史记录
+    with st.sidebar:
+        st.markdown("---")
+        if st.button("📜 查看分析历史", width="stretch"):
+            st.session_state.show_history = not st.session_state.get("show_history", False)
+
+    # 显示历史记录区域
+    if st.session_state.get("show_history", False):
+        st.header("📚 论文分析历史")
+        from core.history_manager import HistoryManager
+        import pandas as pd
+        
+        hm = HistoryManager()
+        history = hm.list_history()
+        
+        if history:
+            # 转换为DataFrame显示
+            df = pd.DataFrame(history)
+            
+            # 格式化显示列
+            display_df = df[["timestamp", "prompt_name", "original_source", "file_name"]].copy()
+            display_df["timestamp"] = pd.to_datetime(display_df["timestamp"], unit='s').dt.strftime('%Y-%m-%d %H:%M:%S')
+            
+            # 重命名列
+            display_df.columns = ["时间", "提示词模板", "来源", "结果文件"]
+            
+            st.dataframe(display_df, width="stretch", hide_index=True)
+            
+            st.info("提示：详细内容请在上方通过输入相同的URL或上传文件来查看已缓存的分析结果。")
+            if st.button("关闭历史记录"):
+                st.session_state.show_history = False
+                st.rerun()
+        else:
+            st.info("暂无历史记录")
+        st.markdown("---")
+
     # 侧边栏配置
     with st.sidebar:
         st.header("配置选项")
@@ -324,10 +360,11 @@ def main():
 
         st.markdown("---")
         st.subheader("选择输入方式")
-        input_type = st.radio("输入源", ["arXiv URL", "本地PDF文件"])
+        input_type = st.radio("输入源", ["arXiv URL", "本地PDF文件", "本地目录 (批量)"])
 
         paper_input = None
         is_file_upload = False
+        is_batch_mode = False
         paper_url_display = "" # 用于显示的标识
 
         if input_type == "arXiv URL":
@@ -372,6 +409,24 @@ def main():
             if paper_url != selected_example:
                 logger.debug(f"用户输入论文URL: {paper_url}")
 
+        elif input_type == "本地目录 (批量)":
+            is_batch_mode = True
+            st.markdown(
+                """
+            <div style="margin-top: 20px; margin-bottom: 10px; font-weight: bold; color: #1e40af;">
+                👇 请输入本地目录及绝对路径 👇
+            </div>
+            """,
+                unsafe_allow_html=True,
+            )
+            dir_path = st.text_input(
+                "目录路径",
+                help="输入包含PDF文件的本地目录绝对路径，将递归分析所有文件",
+                key="dir_path_input"
+            )
+            paper_input = dir_path
+            paper_url_display = dir_path
+
         else:
             # 文件上传模式
             uploaded_file = st.file_uploader("上传PDF论文", type=["pdf"], help="上传本地PDF文件进行分析")
@@ -384,9 +439,13 @@ def main():
         # 创建两列布局来放置按钮
         col1, col2 = st.columns(2)
         with col1:
-            process_button = st.button("开始分析", use_container_width=True)
+            if is_batch_mode:
+                 process_button = st.button("🚀 开始批量分析", width="stretch", type="primary")
+            else:
+                 process_button = st.button("🚀 开始分析", width="stretch", type="primary")
+        
         with col2:
-            clear_button = st.button("清空结果", use_container_width=True)
+            stop_button = st.button("🛑 停止分析", width="stretch")
 
         # 添加一些说明信息
         st.markdown(
@@ -405,7 +464,7 @@ def main():
         )
 
     # 清空聊天历史和已处理论文记录
-    if clear_button:
+    if stop_button: # Changed from clear_button to stop_button for consistency with new UI
         logger.info("用户清空分析结果")
         st.session_state.messages = []
         st.session_state.processed_papers = {}
@@ -428,7 +487,7 @@ def main():
                         key=f"download_{message['file_name']}_{i}",
                     )
                 # 添加重新分析功能
-                if "url" in message:
+                if "url" in message and not is_batch_mode: # 批量模式暂不支持单个历史记录的重新分析按钮逻辑混淆
                     with st.expander("重新分析"):
                         prompt_options = list_prompts()
                         selected_prompt_reanalyze = st.selectbox(
@@ -446,8 +505,165 @@ def main():
     # 创建当前分析进展区域
     progress_container = st.container()
 
+    # 处理批量处理逻辑
+    if is_batch_mode and process_button:
+        if not paper_input or not os.path.exists(paper_input):
+            st.error("请输入有效的目录路径")
+            return
+            
+        st.session_state.messages.append({"role": "user", "content": f"开始批量分析目录: {paper_input}"})
+        
+        from pathlib import Path
+        from core.smart_paper_core import SmartPaper # Import SmartPaper for batch processing
+        dir_path = Path(paper_input)
+        pdf_files = list(dir_path.rglob("*.pdf"))
+        total_files = len(pdf_files)
+        
+        if total_files == 0:
+            st.warning("目录中未找到PDF文件")
+            return
+            
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        results_summary = []
+        
+        try:
+             # 初始化Reader
+            logger.debug("初始化SmartPaper用于批量处理")
+            reader = SmartPaper(output_format="markdown")
+            
+            # 获取历史记录用于跳过重复
+            from core.history_manager import HistoryManager
+            hm = HistoryManager()
+            history = hm.list_history()
+            processed_files = set()
+            for entry in history:
+                if entry.get("file_name"):
+                    processed_files.add(entry["file_name"])
+            
+            for idx, file_path in enumerate(pdf_files):
+                status_text.text(f"正在处理 [{idx+1}/{total_files}]: {file_path.name}")
+                
+                # Check 1: Empty file
+                if os.path.getsize(file_path) == 0:
+                    logger.warning(f"跳过空文件: {file_path.name}")
+                    results_summary.append(f"⚠️ {file_path.name}: 文件为空，已跳过")
+                    progress_bar.progress((idx + 1) / total_files)
+                    continue
+
+                # Check 2: Skip existing (by filename)
+                # 生成预期的文件名 (类似 process_paper 中的逻辑)
+                session_id = st.session_state.get("session_id", "default")
+                safe_name = "".join([c for c in file_path.name if c.isalpha() or c.isdigit() or c in ".-_"])
+                # 注意：这里我们简化判断，只要历史记录中有同名文件就跳过
+                # 如果需要更严格，可以结合prompt_name
+                
+                is_processed = False
+                # 简单检查文件名是否包含在已处理列表中 (模糊匹配)
+                # 更好的方式是检查 original_source 或者 file_name
+                # 这里我们遍历历史记录检查 original_source 是否匹配当前绝对路径
+                # 或者文件名是否匹配
+                
+                matched_history = None
+                for entry in history:
+                    if entry.get("file_name") and file_path.name in entry["file_name"]:
+                         matched_history = entry
+                         break
+                
+                if matched_history:
+                    logger.info(f"文件已存在于历史记录中，跳过: {file_path.name}")
+                    results_summary.append(f"🔄 {file_path.name}: 已存在 (历史记录)")
+                    progress_bar.progress((idx + 1) / total_files)
+                    continue
+
+                try:
+                    # 使用 st.expander 显示当前正在处理的论文流式输出
+                    with st.expander(f"正在分析: {file_path.name}", expanded=True):
+                        stream_placeholder = st.empty()
+                        full_content = ""
+                        
+                        # 调用 process_paper_stream
+                        # 注意：我们需要确保 process_paper_stream 能够接受本地路径
+                        # 查看 smart_paper_core.py, process_paper_stream(file_path, prompt_name) 是存在的
+                        
+                        # 为了复用保存逻辑，我们需要手动处理流并保存，或者调用 process_paper (非流式)
+                        # 但用户想要看流式过程。
+                        # SmartPaper.process_paper_stream 只负责 yield 结果，不负责保存到文件(?)
+                        # 让我们检查 SmartPaper.process_paper 源码 (Line 80-110 of smart_paper_core.py)
+                        # 它是先 process_with_content 获取完整结果，然后再 save_analysis。
+                        # process_paper_stream 只是 yield。
+                        
+                        # 所以我们需要模拟 process_paper 的逻辑但支持流式显示。
+                        # 1. 转换PDF
+                        # 2. 调用 LLMWrapper.process_stream_with_content
+                        # 3. 收集结果
+                        # 4. 保存
+                        
+                        # 简化方案：直接使用 reader.process_paper_stream 获取流，并累积
+                        # 然后手动调用 history_manager.save_analysis
+                        
+                        # 步骤1: 转换 (Reader内部 helper?)
+                        # 实际上 reader.process_paper_stream 内部已经做了转换和流式调用。
+                        # 让我们看看 process_paper_stream 的实现 (没显示在之前的 view_file 中但它是存在的)
+                        # 假设 process_paper_stream 返回 generator yielding chunk string
+                        
+                        stream_gen = reader.process_paper_stream(str(file_path), prompt_name=selected_prompt)
+                        
+                        for chunk in stream_gen:
+                            full_content += chunk
+                            stream_placeholder.markdown(full_content + "▌")
+                        
+                        stream_placeholder.markdown(full_content)
+                        
+                        # 步骤2: 保存结果
+                        # 需要 metadata (转换结果中的 metadata)
+                        # process_paper_stream 可能无法返回 metadata? 
+                        # 如果 process_paper_stream 只 yield contents relevant to prompt, we might miss metadata.
+                        
+                        # 备选方案：由于 SmartPaper API 的限制，如果 process_paper_stream 不返回 metadata，
+                        # 我们可能为了流式展示而牺牲 metadata 或者需要修改 core。
+                        # 但通常 prompt analysis 不需要复杂的 metadata 除非用于引用。
+                        
+                        # 让我们尝试构造一个基本的 metadata
+                        metadata = {"source": str(file_path), "file_name": file_path.name}
+                        
+                        # 手动保存
+                        # 计算 hash 用于去重/ID
+                        import hashlib
+                        with open(file_path, "rb") as f:
+                            file_hash = hashlib.md5(f.read()).hexdigest()
+                            
+                        reader.history_manager.save_analysis(
+                            source=str(file_path),
+                            source_hash=file_hash,
+                            prompt_name=selected_prompt,
+                            content=full_content,
+                            metadata=metadata
+                        )
+                        
+                    results_summary.append(f"✅ {file_path.name}")
+                    
+                except Exception as e:
+                    logger.error(f"处理 {file_path.name} 失败: {e}")
+                    results_summary.append(f"❌ {file_path.name}: {str(e)}")
+                
+                # 更新进度条
+                progress_bar.progress((idx + 1) / total_files)
+            
+            status_text.text("批量分析完成！")
+            
+            # 显示汇总结果
+            summary_text = "### 批量分析报告\n\n" + "\n".join(results_summary)
+            st.session_state.messages.append({"role": "论文分析助手", "content": summary_text})
+            st.rerun()
+            
+        except Exception as e:
+             st.error(f"批量处理发生错误: {str(e)}")
+
+
     # 处理新论文并流式输出
-    if process_button:
+    elif process_button and not is_batch_mode:
         logger.info(f"用户点击开始分析按钮，目标: {paper_url_display}, 提示词模板: {selected_prompt}")
 
         if not paper_input:
@@ -469,7 +685,7 @@ def main():
                         "url": paper_input,
                     }
                 )
-                st.experimental_rerun()
+                st.rerun()
                 return
         
         # 检查是否已处理 (使用显示名称作为key)

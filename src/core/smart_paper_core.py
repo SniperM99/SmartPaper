@@ -89,20 +89,22 @@ class SmartPaper:
             logger.info(f"转换PDF成功: {file_path}，使用转换器: {converter_name}")
 
             # 使用提示词模式处理
-            analysis = self.processor.process_with_content(result["text_content"], prompt_name)
+            analysis_result = self.processor.process_with_content(result["text_content"], prompt_name)
+            # 提取实际内容，如果是字典则获取result字段
+            analysis_content = analysis_result["result"] if isinstance(analysis_result, dict) else analysis_result
 
             # 保存到历史记录
             self.history_manager.save_analysis(
                 source=input_source,
                 source_hash=source_hash,
                 prompt_name=prompt_name or "default",
-                content=analysis,
+                content=analysis_content,
                 metadata=result["metadata"]
             )
 
             # 格式化输出
             output = self.output_formatter.format(
-                content=analysis, metadata=result["metadata"], format=self.output_format
+                content=analysis_content, metadata=result["metadata"], format=self.output_format
             )
 
             return output
@@ -111,7 +113,7 @@ class SmartPaper:
             raise Exception(f"处理论文失败: {str(e)}")
 
     def process_directory(self, dir_path: str, prompt_name: Optional[str] = None) -> List[Dict]:
-        """处理目录中的所有论文
+        """递归处理目录中的所有论文
 
         Args:
             dir_path (str): 目录路径
@@ -126,8 +128,14 @@ class SmartPaper:
         if not dir_path.exists():
             raise FileNotFoundError(f"目录不存在: {dir_path}")
 
-        for file_path in dir_path.glob("*.pdf"):
+        # 使用 rglob 递归查找所有 .pdf 文件
+        pdf_files = list(dir_path.rglob("*.pdf"))
+        total_files = len(pdf_files)
+        logger.info(f"在目录 {dir_path} 中找到 {total_files} 个PDF文件")
+
+        for idx, file_path in enumerate(pdf_files, 1):
             try:
+                logger.info(f"[{idx}/{total_files}] 正在处理: {file_path.name}")
                 result = self.process_paper(str(file_path), prompt_name)
                 results.append(result)
             except Exception as e:

@@ -41,6 +41,8 @@ logs/
 outputs/
 results/
 saved_analyses/
+test_papers/
+
 # 配置文件
 .env
 config.local.yaml

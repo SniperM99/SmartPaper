@@ -162,3 +162,26 @@ class HistoryManager:
         except Exception as e:
             logger.error(f"保存分析结果失败: {e}")
             raise e
+
+    def list_history(self) -> list:
+        """获取所有历史记录列表
+
+        Returns:
+            list: 包含历史记录信息的字典列表，按时间倒序排列
+        """
+        history_list = []
+        for key, entry in self.history_index.items():
+            # 确保包含必要字段
+            item = {
+                "original_source": entry.get("original_source", "Unknown"),
+                "prompt_name": entry.get("prompt_name", "Unknown"),
+                "timestamp": entry.get("timestamp", 0),
+                "file_name": entry.get("file_name", ""),
+                "file_path": os.path.join(self.storage_dir, entry.get("file_name", "")),
+                "metadata": entry.get("metadata", {})
+            }
+            history_list.append(item)
+        
+        # 按时间戳倒序排列
+        history_list.sort(key=lambda x: x["timestamp"], reverse=True)
+        return history_list
