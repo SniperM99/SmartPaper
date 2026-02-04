@@ -845,7 +845,7 @@ def main():
                                 data=message["content"],
                                 file_name=message["file_name"],
                                 mime="text/markdown",
-                                key=f"download_{message['file_name']}_{i}",
+                                key=f"download_{message['file_name']}_{i}_{uuid.uuid4().hex[:8]}",
                             )
                         if "url" in message:
                             with st.expander("重新分析"):
