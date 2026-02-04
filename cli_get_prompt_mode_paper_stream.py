@@ -39,7 +39,13 @@ def process_paper(url: str, prompt_name: str = "yuanbao"):
         logger.info("分析结果:\n")
 
         # 使用流式处理
-        for chunk in reader.process_paper_url_stream(url, prompt_name=prompt_name):
+        if os.path.exists(url):
+            logger.info(f"检测到本地文件: {url}")
+            stream_gen = reader.process_paper_stream(url, prompt_name=prompt_name)
+        else:
+            stream_gen = reader.process_paper_url_stream(url, prompt_name=prompt_name)
+
+        for chunk in stream_gen:
             # 流式打印到控制台
             print(chunk, end="", flush=True)
             # 追加写入输出文件
@@ -70,7 +76,7 @@ def main():
     parser.add_argument(
         "--prompt",
         "-p",
-        default="coolpapaers",
+        default="phd_analysis",
         choices=list_prompts().keys(),
         help="提示词模板名称",
     )

@@ -59,26 +59,36 @@ def validate_and_format_arxiv_url(url: str) -> str:
     return formatted_url
 
 
-def process_paper(url: str, prompt_name: str = "yuanbao"):
+def process_paper(input_source, prompt_name: str = "yuanbao", is_file_upload: bool = False):
     """处理论文并以流式方式yield结果"""
     try:
-        # 验证并格式化URL
-        try:
-            url = validate_and_format_arxiv_url(url)
-        except ValueError as e:
-            logger.error(f"URL验证失败: {str(e)}")
-            yield {"type": "final", "success": False, "error": str(e)}
-            return
+        url = ""
+        if not is_file_upload:
+            url = input_source
+            # 验证并格式化URL
+            try:
+                url = validate_and_format_arxiv_url(url)
+            except ValueError as e:
+                logger.error(f"URL验证失败: {str(e)}")
+                yield {"type": "final", "success": False, "error": str(e)}
+                return
+        else:
+            # 如果是文件上传
+            uploaded_file = input_source
+            url = uploaded_file.name  # 使用文件名作为标识
 
         logger.info(f"使用提示词模板: {prompt_name}")
-        logger.info(f"处理URL: {url}")
+        logger.info(f"处理目标: {url}")
 
         # 创建输出目录及输出文件，文件名中加入用户 session_id 避免不同用户间冲突
         output_dir = "outputs"
         os.makedirs(output_dir, exist_ok=True)
         session_id = st.session_state.get("session_id", "default")
+        
+        # 安全的文件名处理
+        safe_name = "".join([c for c in url.split("/")[-1] if c.isalpha() or c.isdigit() or c in ".-_"])
         output_file = os.path.join(
-            output_dir, f'analysis_{session_id}_{url.split("/")[-1]}_prompt_{prompt_name}.md'
+            output_dir, f'analysis_{session_id}_{safe_name}_prompt_{prompt_name}.md'
         )
         logger.info(f"输出文件将保存至: {output_file}\n")
 
@@ -91,7 +101,20 @@ def process_paper(url: str, prompt_name: str = "yuanbao"):
         with open(output_file, "w", encoding="utf-8") as f:
             chunk_count = 0
             total_length = 0
-            for chunk in reader.process_paper_url_stream(url, prompt_name=prompt_name):
+            
+            # 获取流生成器
+            if is_file_upload:
+                # 保存临时文件
+                temp_dir = "temp"
+                os.makedirs(temp_dir, exist_ok=True)
+                file_path = os.path.join(temp_dir, url)
+                with open(file_path, "wb") as temp_f:
+                    temp_f.write(input_source.getbuffer())
+                stream_gen = reader.process_paper_stream(file_path, prompt_name=prompt_name)
+            else:
+                stream_gen = reader.process_paper_url_stream(url, prompt_name=prompt_name)
+
+            for chunk in stream_gen:
                 chunk_count += 1
                 total_length += len(chunk)
                 f.write(chunk)
@@ -282,68 +305,81 @@ def main():
         # 显示可用的提示词模板
         prompt_options = list_prompts()
         logger.debug(f"加载提示词模板，共 {len(prompt_options)} 个")
+        
+        # 设置默认选中项
+        options = list(prompt_options.keys())
+        default_index = 0
+        target_default = "phd_analysis"
+        if target_default in options:
+            default_index = options.index(target_default)
+            
         selected_prompt = st.selectbox(
             "选择提示词模板",
-            options=list(prompt_options.keys()),
+            options=options,
+            index=default_index,
             format_func=lambda x: f"{x}: {prompt_options[x]}",
             help="选择用于分析的提示词模板",
         )
         logger.debug(f"用户选择提示词模板: {selected_prompt}")
 
-        # 示例URL列表
-        example_urls = [
-            "https://arxiv.org/pdf/2305.12002",
-            "https://arxiv.org/abs/2310.06825",
-            "https://arxiv.org/pdf/2303.08774",
-            "https://arxiv.org/abs/2307.09288",
-            "https://arxiv.org/pdf/2312.11805",
-        ]
+        st.markdown("---")
+        st.subheader("选择输入方式")
+        input_type = st.radio("输入源", ["arXiv URL", "本地PDF文件"])
 
-        # 创建示例URL选择器
-        st.subheader("选择示例论文")
-        selected_example = st.selectbox(
-            "选择一个示例论文URL",
-            options=example_urls,
-            format_func=lambda x: x.split("/")[-1] if "/" in x else x,
-            help="选择一个预设的论文URL作为示例",
-        )
+        paper_input = None
+        is_file_upload = False
+        paper_url_display = "" # 用于显示的标识
 
-        # 输入论文URL，使用高亮样式
-        st.markdown(
-            """
-        <div style="margin-top: 20px; margin-bottom: 10px; font-weight: bold; color: #1e40af;">
-            👇 请在下方输入论文URL 👇
-        </div>
-        """,
-            unsafe_allow_html=True,
-        )
+        if input_type == "arXiv URL":
+            # 示例URL列表
+            example_urls = [
+                "https://arxiv.org/pdf/2305.12002",
+                "https://arxiv.org/abs/2310.06825",
+                "https://arxiv.org/pdf/2303.08774",
+                "https://arxiv.org/abs/2307.09288",
+                "https://arxiv.org/pdf/2312.11805",
+            ]
 
-        paper_url = st.text_input(
-            "论文URL",
-            value=selected_example,
-            help="输入要分析的论文URL (支持arXiv URL，自动转换为PDF格式)",
-            key="paper_url_input",
-        )
+            # 创建示例URL选择器
+            st.subheader("选择示例论文")
+            selected_example = st.selectbox(
+                "选择一个示例论文URL",
+                options=example_urls,
+                format_func=lambda x: x.split("/")[-1] if "/" in x else x,
+                help="选择一个预设的论文URL作为示例",
+            )
 
-        # 添加JavaScript来高亮URL输入框
-        st.markdown(
-            """
-        <script>
-            // 等待页面加载完成
-            setTimeout(function() {
-                // 获取URL输入框并添加高亮样式
-                const urlInput = document.querySelector('[data-testid="stTextInput"] input');
-                if (urlInput) {
-                    urlInput.classList.add('url-input');
-                }
-            }, 500);
-        </script>
-        """,
-            unsafe_allow_html=True,
-        )
+            # 输入论文URL，使用高亮样式
+            st.markdown(
+                """
+            <div style="margin-top: 20px; margin-bottom: 10px; font-weight: bold; color: #1e40af;">
+                👇 请在下方输入论文URL 👇
+            </div>
+            """,
+                unsafe_allow_html=True,
+            )
 
-        if paper_url != selected_example:
-            logger.debug(f"用户输入论文URL: {paper_url}")
+            paper_url = st.text_input(
+                "论文URL",
+                value=selected_example,
+                help="输入要分析的论文URL (支持arXiv URL，自动转换为PDF格式)",
+                key="paper_url_input",
+            )
+            
+            paper_input = paper_url
+            paper_url_display = paper_url
+            
+            if paper_url != selected_example:
+                logger.debug(f"用户输入论文URL: {paper_url}")
+
+        else:
+            # 文件上传模式
+            uploaded_file = st.file_uploader("上传PDF论文", type=["pdf"], help="上传本地PDF文件进行分析")
+            if uploaded_file:
+                paper_input = uploaded_file
+                is_file_upload = True
+                paper_url_display = uploaded_file.name
+                logger.debug(f"用户上传文件: {uploaded_file.name}")
 
         # 创建两列布局来放置按钮
         col1, col2 = st.columns(2)
@@ -412,32 +448,41 @@ def main():
 
     # 处理新论文并流式输出
     if process_button:
-        logger.info(f"用户点击开始分析按钮，URL: {paper_url}, 提示词模板: {selected_prompt}")
+        logger.info(f"用户点击开始分析按钮，目标: {paper_url_display}, 提示词模板: {selected_prompt}")
 
-        # 先验证URL格式，如不正确则直接报错提示并更新会话消息
-        try:
-            validated_url = validate_and_format_arxiv_url(paper_url)
-        except ValueError as exc:
-            error_stack = traceback.format_exc()
-            logger.error(f"用户输入无效 arXiv URL\n{error_stack}")
-            st.error(str(exc))
-            st.session_state.messages.append(
-                {
-                    "role": "论文分析助手",
-                    "content": f"错误: {exc}\n\n详细错误信息:\n{error_stack}",
-                    "url": paper_url,
-                }
-            )
-            st.experimental_rerun()
+        if not paper_input:
+            st.error("请提供有效的论文URL或上传PDF文件")
             return
 
-        if paper_url in st.session_state.processed_papers:
-            logger.warning(f"论文已分析过: {paper_url}")
+        # 先验证URL格式 (仅针对URL模式)
+        if not is_file_upload:
+            try:
+                validated_url = validate_and_format_arxiv_url(paper_input)
+            except ValueError as exc:
+                error_stack = traceback.format_exc()
+                logger.error(f"用户输入无效 arXiv URL\n{error_stack}")
+                st.error(str(exc))
+                st.session_state.messages.append(
+                    {
+                        "role": "论文分析助手",
+                        "content": f"错误: {exc}\n\n详细错误信息:\n{error_stack}",
+                        "url": paper_input,
+                    }
+                )
+                st.experimental_rerun()
+                return
+        
+        # 检查是否已处理 (使用显示名称作为key)
+        # 注意：这里简化处理，对于文件上传可能需要更好的去重机制（如文件hash）
+        paper_key = paper_url_display 
+        
+        if paper_key in st.session_state.processed_papers:
+            logger.warning(f"论文已分析过: {paper_key}")
             st.warning('该论文已经分析过，如果不满意，可以点击对应分析结果的"重新分析"按钮。')
         else:
             # 添加用户消息到聊天历史
             st.session_state.messages.append(
-                {"role": "user", "content": f"请分析论文: {paper_url}"}
+                {"role": "user", "content": f"请分析论文: {paper_key}"}
             )
 
             # 在进度容器中创建进度显示区域
@@ -446,9 +491,9 @@ def main():
                 progress_placeholder = st.empty()
 
             with st.spinner("正在处理论文..."):
-                logger.info(f"开始分析论文: {paper_url}")
+                logger.info(f"开始分析论文: {paper_key}")
                 full_output = ""
-                for result in process_paper(paper_url, selected_prompt):
+                for result in process_paper(paper_input, selected_prompt, is_file_upload=is_file_upload):
                     if result["type"] == "chunk":
                         full_output += result["content"]
                         # 实时更新进度显示
@@ -459,7 +504,7 @@ def main():
                             response = full_output
                             file_path = result["file_path"]
                             file_name = os.path.basename(file_path)
-                            st.session_state.processed_papers[paper_url] = {
+                            st.session_state.processed_papers[paper_key] = {
                                 "content": response,
                                 "file_path": file_path,
                                 "file_name": file_name,
@@ -469,7 +514,7 @@ def main():
                                 "content": response,
                                 "file_name": file_name,
                                 "file_path": file_path,
-                                "url": paper_url,  # 保留URL以支持多次重新分析
+                                "url": paper_key,  # 保留URL/Filename以支持多次重新分析
                             }
                             st.session_state.messages.append(message)
                         else:
@@ -478,7 +523,7 @@ def main():
                             message = {
                                 "role": "论文分析助手",
                                 "content": response,
-                                "url": paper_url,  # 即使失败也保留URL
+                                "url": paper_key,  # 即使失败也保留URL
                             }
                             st.session_state.messages.append(message)
                         break

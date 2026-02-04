@@ -24,7 +24,11 @@ def process_paper(
 
         # 分析论文
         try:
-            result = reader.process_paper_url(url, prompt_name=prompt_name)
+            if os.path.exists(url):
+                logger.info(f"检测到本地文件: {url}")
+                result = reader.process_paper(url, prompt_name=prompt_name)
+            else:
+                result = reader.process_paper_url(url, prompt_name=prompt_name)
         except Exception as e:
             logger.error(f"分析失败: {str(e)}")
             sys.exit(1)
@@ -53,7 +57,7 @@ def main():
         "url", nargs="?", default="https://arxiv.org/pdf/2305.12002", help="论文URL"
     )
     parser.add_argument(
-        "--prompt", "-p", default="yuanbao", choices=list_prompts().keys(), help="提示词模板名称"
+        "--prompt", "-p", default="phd_analysis", choices=list_prompts().keys(), help="提示词模板名称"
     )
     parser.add_argument("--output", "-o", default="outputs/analysis_prompt.md", help="输出文件路径")
 

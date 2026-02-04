@@ -303,6 +303,52 @@ class SmartPaper:
             yield f"错误: {error_msg}"
             raise Exception(error_msg)
 
+    def process_paper_stream(
+        self,
+        file_path: str,
+        prompt_name: Optional[str] = None,
+    ) -> Generator[str, None, None]:
+        """流式处理本地论文文件
+
+        Args:
+            file_path (str): 论文文件路径
+            prompt_name (Optional[str], optional): 提示词名称
+
+        Yields:
+            str: 流式输出的文本片段
+        """
+        try:
+            yield "✨ 元数据信息 ✨\n\n"
+            yield f"📄 处理文件: {file_path}\n\n"
+            yield f"💡 提示词模板: {prompt_name if prompt_name else '默认'}\n\n"
+
+            yield "🚀 正在转换PDF...\n\n"
+
+            # 转换PDF
+            converter_name = self.config.get("document_converter", {}).get(
+                "converter_name", "markitdown"
+            )
+            result = convert_to_text(file_path, config=self.config, converter_name=converter_name)
+            logger.info(f"转换PDF成功: {file_path}，使用转换器: {converter_name}")
+
+            yield "✅ PDF转换完成，开始分析...\n\n"
+
+            # 获取文本内容
+            text_content = result["text_content"]
+
+            # 使用提示词模式处理
+            yield "使用提示词模式进行分析...\n"
+            for chunk in self.processor.process_stream_with_content(text_content, prompt_name):
+                yield chunk
+
+            logger.info(f"流式分析完成")
+
+        except Exception as e:
+            error_msg = f"处理论文失败: {str(e)}"
+            logger.error(error_msg)
+            yield f"错误: {error_msg}"
+            raise Exception(error_msg)
+
     def set_api_key(self, api_key: str):
         """设置API密钥
 
