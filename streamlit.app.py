@@ -277,11 +277,10 @@ def main():
     )
 
     # 设置页面标题
-    st.title("SmartPaper")
+    st.title("赋睿论文助手")
     st.markdown(
         """
     <div style="color: gray; font-size: 0.8em;">
-        <b>SmartPaper</b>: <a href="https://github.com/sanbuphy/SmartPaper">GitHub</a> -
         一个迷你助手，帮助您快速阅读论文
     </div>
     """,
