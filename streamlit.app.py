@@ -7,6 +7,11 @@ SmartPaper - Streamlit Web界面版本
 功能:
     提供Web界面让用户输入论文URL，选择提示词模板，并实时显示分析结果
 """
+import sys
+import os
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.join(BASE_DIR, "src"))
 
 import os
 import streamlit as st
