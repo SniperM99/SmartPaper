@@ -299,20 +299,37 @@ def main():
     if "session_id" not in st.session_state:
         st.session_state.session_id = uuid.uuid4().hex
 
-    # 侧边栏：历史记录
+    # 侧边栏配置：仅保留全局配置（提示词模板）
     with st.sidebar:
-        st.markdown("---")
-        if st.button("📜 查看分析历史", width="stretch"):
-            st.session_state.show_history = not st.session_state.get("show_history", False)
+        st.header("配置选项")
+        # 显示可用的提示词模板
+        prompt_options = list_prompts()
+        logger.debug(f"加载提示词模板，共 {len(prompt_options)} 个")
+        
+        # 设置默认选中项
+        options = list(prompt_options.keys())
+        default_index = 0
+        target_default = "phd_analysis"
+        if target_default in options:
+            default_index = options.index(target_default)
+            
+        selected_prompt = st.selectbox(
+            "选择提示词模板",
+            options=options,
+            index=default_index,
+            format_func=lambda x: f"{x}: {prompt_options[x]}",
+            help="选择用于分析的提示词模板",
+        )
+        logger.debug(f"用户选择提示词模板: {selected_prompt}")
 
-    # 显示历史记录区域
-    if st.session_state.get("show_history", False):
+    # 创建顶部标签页
+    tab_analysis, tab_history = st.tabs(["🚀 当前分析", "📚 历史记录"])
+
+    # === 历史记录标签页 ===
+    with tab_history:
         st.header("📚 论文分析历史")
         from core.history_manager import HistoryManager
         import pandas as pd
-        
-        hm = HistoryManager()
-        history = hm.list_history()
         
         hm = HistoryManager()
         history = hm.list_history()
@@ -343,122 +360,134 @@ def main():
                  st.markdown("---")
 
             # 简单的统计信息
-            st.caption(f"共找到 {len(history)} 条记录")
-            
-            # 表头
-            cols = st.columns([0.2, 0.15, 0.45, 0.1, 0.1])
-            cols[0].markdown("**分析时间**")
-            cols[1].markdown("**匹配模板**")
-            cols[2].markdown("**来源 (点击打开)**")
-            cols[3].markdown("**查看解析**")
-            cols[4].markdown("**删除记录**")
-            st.markdown("---")
-            
-            for idx, entry in enumerate(history):
-                cols = st.columns([0.2, 0.15, 0.45, 0.1, 0.1])
-                
-                # 时间
-                ts = pd.to_datetime(entry['timestamp'], unit='s').strftime('%m-%d %H:%M')
-                cols[0].text(ts)
-                
-                # 模板
-                prompt_name = entry['prompt_name']
-                if len(prompt_name) > 10: prompt_name = prompt_name[:8] + ".."
-                cols[1].text(prompt_name)
-                
-                # 来源（按钮形式）
-                source_name = entry['file_name'] or os.path.basename(entry['original_source'])
-                full_source_path = entry.get('original_source', '')
-                
-                # 按钮 Label 处理
-                btn_label = source_name
-                if len(btn_label) > 35:
-                    btn_label = btn_label[:15] + "..." + btn_label[-15:]
-                
-                with cols[2]:
-                    # 检查是否是本地存在的文件
-                    is_local = full_source_path and os.path.exists(full_source_path)
-                    help_text = f"路径: {full_source_path}" if is_local else "未知路径或远程URL"
-                    
-                    if st.button(f"📄 {btn_label}", key=f"open_src_{entry['cache_key']}", help=help_text, disabled=not is_local):
-                        try:
-                            import subprocess
-                            # macOS 使用 open
-                            subprocess.run(["open", full_source_path], check=True)
-                            st.toast(f"正在打开: {source_name}")
-                        except Exception as e:
-                            st.error(f"打开失败: {e}")
+        # === Search & Filter ===
+        search_term = st.text_input("🔍 搜索历史记录", placeholder="输入文件名或关键词快速筛选...", label_visibility="collapsed")
+        
+        # Filter logic
+        filtered_history = []
+        if search_term:
+            search_lower = search_term.lower()
+            for item in history:
+                name = item.get('file_name', '') or os.path.basename(item.get('original_source', ''))
+                if search_lower in name.lower() or search_lower in item.get('prompt_name', '').lower():
+                    filtered_history.append(item)
+        else:
+            filtered_history = history
 
-                # 查看按钮
-                with cols[3]:
-                    if st.button("👁️", key=f"view_{entry['cache_key']}"):
-                        # 读取内容
+        if filtered_history:
+            # === Pagination ===
+            ITEMS_PER_PAGE = 20
+            total_items = len(filtered_history)
+            total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+            
+            if total_pages > 1:
+                col_pg1, col_pg2 = st.columns([0.85, 0.15])
+                with col_pg2:
+                    current_page = st.number_input("页码", min_value=1, max_value=total_pages, value=1, step=1, label_visibility="collapsed")
+            else:
+                current_page = 1
+                
+            start_idx = (current_page - 1) * ITEMS_PER_PAGE
+            end_idx = start_idx + ITEMS_PER_PAGE
+            displayed_history = filtered_history[start_idx:end_idx]
+
+            # --- HEADER ---
+            # Compact header: Time | Template | File Info | Delete
+            st.markdown("""
+            <style>
+            .history-header { font-weight: bold; color: #666; font-size: 0.9em; padding-bottom: 5px; border-bottom: 1px solid #eee; }
+            .history-row { padding: 5px 0; border-bottom: 1px solid #f0f0f0; }
+            .file-name { font-weight: 600; color: #1e3a8a; font-size: 1.05em; }
+            .compact-btn button { padding: 0px 8px !important; height: 28px !important; min-height: 0px !important; font-size: 0.8em !important; }
+            </style>
+            """, unsafe_allow_html=True)
+            
+            h_cols = st.columns([0.15, 0.12, 0.63, 0.1])
+            h_cols[0].markdown(":grey[分析时间]")
+            h_cols[1].markdown(":grey[模板]")
+            h_cols[2].markdown(":grey[论文解析内容与操作]")
+            h_cols[3].markdown(":grey[删除]")
+            # st.markdown("<div style='margin-bottom: 5px;'></div>", unsafe_allow_html=True) # Spacer
+
+            # --- LIST ---
+            for idx, entry in enumerate(displayed_history):
+                # Use a container for better grouping (optional, but keeps css scope tight if needed)
+                with st.container():
+                     # Main Row Layout
+                    cols = st.columns([0.15, 0.12, 0.63, 0.1])
+                    
+                    # 1. Time
+                    ts = pd.to_datetime(entry['timestamp'], unit='s').strftime('%m-%d %H:%M')
+                    cols[0].caption(ts)
+                    
+                    # 2. Template
+                    p_name = entry['prompt_name']
+                    cols[1].caption(p_name)
+                    
+                    # 3. File Info & Actions (Combined for compactness)
+                    source_name = entry['file_name'] or os.path.basename(entry['original_source'])
+                    full_source_path = entry.get('original_source', '')
+                    is_local = full_source_path and os.path.exists(full_source_path)
+                    
+                    with cols[2]:
+                        # First line: File Name as a Clickable Button (Triggers Open)
+                        # We use help text to show path, and make it look primary or secondary depending on preference
+                        help_txt = f"点击打开源文件: {full_source_path}" if is_local else "远程文件无法直接打开"
+                        
+                        # Use a custom key based on cache_key
+                        if st.button(f"📄 {source_name}", key=f"title_btn_{entry['cache_key']}", help=help_txt, disabled=not is_local):
+                             try:
+                                 import subprocess
+                                 subprocess.run(["open", full_source_path], check=True)
+                                 st.toast(f"正在打开: {source_name}")
+                             except Exception as e:
+                                 st.error(f"打开失败: {e}")
+                        
+                        # Expander for details (Below the button)
+                        
+                        # Expander for details (Below the buttons, but within the main column flow? Streamlit expander takes full width)
+                        # So we put expander BELOW the columns.
+                    
+                    # 4. Delete
+                    with cols[3]:
+                        if st.button("🗑️", key=f"dl_{entry['cache_key']}"):
+                            st.session_state.delete_confirm_key = entry['cache_key']
+                            st.rerun()
+
+                    # Detail Expander (Full Width)
+                    with st.expander("👁️ 查看详细解析", expanded=False):
                         file_path = entry['file_path']
                         if os.path.exists(file_path):
+                            st.info(f"文件位置: {file_path}")
                             with open(file_path, "r", encoding="utf-8") as f:
-                                content = f.read()
-                            st.session_state.viewing_content = {
-                                "title": source_name,
-                                "content": content
-                            }
-                            st.rerun()
+                                st.markdown(f.read())
                         else:
-                            st.error("缺失")
+                            st.error("结果文件已丢失")
+                    
+                    # Divider (Minimal)
+                    st.markdown("<hr style='margin: 5px 0; border-top: 1px solid #eee;'>", unsafe_allow_html=True)
 
-                # 删除按钮
-                with cols[4]:
-                     if st.button("🗑️", key=f"pre_del_{entry['cache_key']}"):
-                         st.session_state.delete_confirm_key = entry['cache_key']
-                         st.rerun()
+            # Pagination info footer
+            st.caption(f"显示 {start_idx+1}-{min(end_idx, total_items)} / 共 {total_items} 条记录")
 
-            st.markdown("---")
-            
-            # 显示查看的内容 (放在列表下方)
-            if "viewing_content" in st.session_state:
-                st.info(f"正在预览: {st.session_state.viewing_content['title']}")
-                with st.expander("📄 分析结果详情", expanded=True):
-                    st.markdown(st.session_state.viewing_content['content'])
-                    if st.button("关闭预览", type="primary"):
-                        del st.session_state.viewing_content
-                        st.rerun()
-            
-            # 关闭历史记录按钮
-            if st.button("收起历史记录"):
-                st.session_state.show_history = False
-                if "viewing_content" in st.session_state:
-                     del st.session_state.viewing_content
-                st.rerun()
         else:
-            st.info("暂无历史记录")
-        st.markdown("---")
+            if search_term:
+                 st.info("🔍 未找到匹配的记录")
+            else:
+                 st.info("暂无历史记录")
 
-    # 侧边栏配置
-    with st.sidebar:
-        st.header("配置选项")
+    st.markdown("---")
 
-        # 显示可用的提示词模板
-        prompt_options = list_prompts()
-        logger.debug(f"加载提示词模板，共 {len(prompt_options)} 个")
-        
-        # 设置默认选中项
-        options = list(prompt_options.keys())
-        default_index = 0
-        target_default = "phd_analysis"
-        if target_default in options:
-            default_index = options.index(target_default)
-            
-        selected_prompt = st.selectbox(
-            "选择提示词模板",
-            options=options,
-            index=default_index,
-            format_func=lambda x: f"{x}: {prompt_options[x]}",
-            help="选择用于分析的提示词模板",
-        )
-        logger.debug(f"用户选择提示词模板: {selected_prompt}")
-
-        st.markdown("---")
+    # === 当前分析标签页 ===
+    with tab_analysis:
         st.subheader("选择输入方式")
-        input_type = st.radio("输入源", ["arXiv URL", "本地PDF文件", "本地目录 (批量)"])
+        # 将原本在侧边栏的输入控件移动到这里
+        input_type = st.radio(
+            "输入源", 
+            ["arXiv URL", "本地PDF文件", "本地目录 (批量)"], 
+            horizontal=True,
+            key="input_source_radio"
+        )
 
         paper_input = None
         is_file_upload = False
@@ -475,31 +504,24 @@ def main():
                 "https://arxiv.org/pdf/2312.11805",
             ]
 
-            # 创建示例URL选择器
-            st.subheader("选择示例论文")
-            selected_example = st.selectbox(
-                "选择一个示例论文URL",
-                options=example_urls,
-                format_func=lambda x: x.split("/")[-1] if "/" in x else x,
-                help="选择一个预设的论文URL作为示例",
-            )
+            col_ex, col_in = st.columns([1, 2])
+            with col_ex:
+                # 创建示例URL选择器
+                selected_example = st.selectbox(
+                    "选择示例论文",
+                    options=example_urls,
+                    format_func=lambda x: x.split("/")[-1] if "/" in x else x,
+                    help="选择一个预设的论文URL作为示例",
+                )
 
-            # 输入论文URL，使用高亮样式
-            st.markdown(
-                """
-            <div style="margin-top: 20px; margin-bottom: 10px; font-weight: bold; color: #1e40af;">
-                👇 请在下方输入论文URL 👇
-            </div>
-            """,
-                unsafe_allow_html=True,
-            )
-
-            paper_url = st.text_input(
-                "论文URL",
-                value=selected_example,
-                help="输入要分析的论文URL (支持arXiv URL，自动转换为PDF格式)",
-                key="paper_url_input",
-            )
+            with col_in:
+                # 输入论文URL
+                paper_url = st.text_input(
+                    "论文URL",
+                    value=selected_example,
+                    help="输入要分析的论文URL (支持arXiv URL，自动转换为PDF格式)",
+                    key="paper_url_input",
+                )
             
             paper_input = paper_url
             paper_url_display = paper_url
@@ -509,14 +531,7 @@ def main():
 
         elif input_type == "本地目录 (批量)":
             is_batch_mode = True
-            st.markdown(
-                """
-            <div style="margin-top: 20px; margin-bottom: 10px; font-weight: bold; color: #1e40af;">
-                👇 请输入本地目录及绝对路径 👇
-            </div>
-            """,
-                unsafe_allow_html=True,
-            )
+            st.info("请输入包含PDF文件的本地目录绝对路径，系统将递归分析所有文件")
             dir_path = st.text_input(
                 "目录路径",
                 help="输入包含PDF文件的本地目录绝对路径，将递归分析所有文件",
@@ -534,81 +549,71 @@ def main():
                 paper_url_display = uploaded_file.name
                 logger.debug(f"用户上传文件: {uploaded_file.name}")
 
-        # 创建两列布局来放置按钮
-        col1, col2 = st.columns(2)
+        # 操作按钮区域
+        st.markdown("<br>", unsafe_allow_html=True)
+        col1, col2 = st.columns([1, 1])
         with col1:
             if is_batch_mode:
-                 process_button = st.button("🚀 开始批量分析", width="stretch", type="primary")
+                 process_button = st.button("🚀 开始批量分析", use_container_width=True, type="primary")
             else:
-                 process_button = st.button("🚀 开始分析", width="stretch", type="primary")
+                 process_button = st.button("🚀 开始分析", use_container_width=True, type="primary")
         
         with col2:
-            stop_button = st.button("🛑 停止分析", width="stretch")
+            stop_button = st.button("🛑 停止/清空", use_container_width=True)
 
-        # 添加一些说明信息
-        st.markdown(
-            """
-        <div style="margin-top: 30px; padding: 15px; background-color: #e0f2fe; border-radius: 8px; border-left: 4px solid #0ea5e9;">
-            <h4 style="margin-top: 0; color: #0369a1;">使用说明</h4>
-            <p style="font-size: 0.9em; color: #0c4a6e;">
-                1. 输入arXiv论文URL<br>
-                2. 选择合适的提示词模板<br>
-                3. 点击"开始分析"按钮<br>
-                4. 等待分析完成后可下载结果
-            </p>
-        </div>
-        """,
-            unsafe_allow_html=True,
-        )
+        if stop_button:
+            logger.info("用户清空分析结果")
+            st.session_state.messages = []
+            st.session_state.processed_papers = {}
+            st.rerun()
 
-    # 清空聊天历史和已处理论文记录
-    if stop_button: # Changed from clear_button to stop_button for consistency with new UI
-        logger.info("用户清空分析结果")
-        st.session_state.messages = []
-        st.session_state.processed_papers = {}
+        st.markdown("---")
+        
+        # 显示聊天历史（分析结果）
+        st.write("### 分析结果")
+        chat_container = st.container()
 
-    # 显示聊天历史
-    st.write("### 分析结果")
-    chat_container = st.container()
-
-    with chat_container:
-        for i, message in enumerate(st.session_state.messages):
-            with st.chat_message(message["role"]):
-                st.markdown(message["content"])
-                # 为已处理的论文显示下载按钮
-                if "file_name" in message:
-                    st.download_button(
-                        label=f"下载 {message['file_name']}",
-                        data=message["content"],
-                        file_name=message["file_name"],
-                        mime="text/markdown",
-                        key=f"download_{message['file_name']}_{i}",
-                    )
-                # 添加重新分析功能
-                if "url" in message and not is_batch_mode: # 批量模式暂不支持单个历史记录的重新分析按钮逻辑混淆
-                    with st.expander("重新分析"):
-                        prompt_options = list_prompts()
-                        selected_prompt_reanalyze = st.selectbox(
-                            "选择提示词模板",
-                            options=list(prompt_options.keys()),
-                            format_func=lambda x: f"{x}: {prompt_options[x]}",
-                            key=f"reanalyze_prompt_{i}",
-                        )
-                        if st.button("重新分析", key=f"reanalyze_button_{i}"):
-                            logger.info(
-                                f"用户请求重新分析，使用提示词模板: {selected_prompt_reanalyze}"
+        # 仅在非正在处理状态下渲染此处的历史记录，避免与下方处理逻辑中的渲染冲突导致 duplicate key
+        if not process_button:
+            with chat_container:
+                for i, message in enumerate(st.session_state.messages):
+                    with st.chat_message(message["role"]):
+                        st.markdown(message["content"])
+                        # 为已处理的论文显示下载按钮
+                        if "file_name" in message:
+                            st.download_button(
+                                label=f"下载 {message['file_name']}",
+                                data=message["content"],
+                                file_name=message["file_name"],
+                                mime="text/markdown",
+                                key=f"download_{message['file_name']}_{i}_{uuid.uuid4().hex[:8]}",
                             )
-                            reanalyze_paper(message["url"], selected_prompt_reanalyze)
+                        # 添加重新分析功能
+                        if "url" in message and not is_batch_mode:
+                            with st.expander("重新分析"):
+                                prompt_options = list_prompts()
+                                selected_prompt_reanalyze = st.selectbox(
+                                    "选择提示词模板",
+                                    options=list(prompt_options.keys()),
+                                    format_func=lambda x: f"{x}: {prompt_options[x]}",
+                                    key=f"reanalyze_prompt_{i}",
+                                )
+                                if st.button("重新分析", key=f"reanalyze_button_{i}"):
+                                    logger.info(
+                                        f"用户请求重新分析，使用提示词模板: {selected_prompt_reanalyze}"
+                                    )
+                                    reanalyze_paper(message["url"], selected_prompt_reanalyze)
 
     # 创建当前分析进展区域
     progress_container = st.container()
 
-    # 处理批量处理逻辑
     if is_batch_mode and process_button:
         if not paper_input or not os.path.exists(paper_input):
             st.error("请输入有效的目录路径")
             return
             
+        # 清空之前的消息
+        st.session_state.messages = []
         st.session_state.messages.append({"role": "user", "content": f"开始批量分析目录: {paper_input}"})
         
         from pathlib import Path
@@ -783,6 +788,8 @@ def main():
             logger.warning(f"论文已分析过: {paper_key}")
             st.warning('该论文已经分析过，如果不满意，可以点击对应分析结果的"重新分析"按钮。')
         else:
+            # 清空之前的消息
+            st.session_state.messages = []
             # 添加用户消息到聊天历史
             st.session_state.messages.append(
                 {"role": "user", "content": f"请分析论文: {paper_key}"}
@@ -795,41 +802,51 @@ def main():
 
             with st.spinner("正在处理论文..."):
                 logger.info(f"开始分析论文: {paper_key}")
+                
+                # --- Persistence Change Start ---
+                # 1. Initialize empty assistant message
+                init_msg = {
+                    "role": "论文分析助手",
+                    "content": "⏳ 正在准备分析...",
+                    "url": paper_key
+                }
+                st.session_state.messages.append(init_msg)
+                msg_index = len(st.session_state.messages) - 1
+                
                 full_output = ""
                 for result in process_paper(paper_input, selected_prompt, is_file_upload=is_file_upload):
                     if result["type"] == "chunk":
                         full_output += result["content"]
-                        # 实时更新进度显示
-                        progress_placeholder.markdown(full_output)
+                        # 2. Real-time update to session state
+                        st.session_state.messages[msg_index]["content"] = full_output
+                        # Real-time update to placeholder (optional but good for animation)
+                        progress_placeholder.markdown(full_output + "▌")
+                        
                     elif result["type"] == "final":
                         if result["success"]:
                             logger.info("论文分析成功")
                             response = full_output
                             file_path = result["file_path"]
                             file_name = os.path.basename(file_path)
+                            
                             st.session_state.processed_papers[paper_key] = {
                                 "content": response,
                                 "file_path": file_path,
                                 "file_name": file_name,
                             }
-                            message = {
-                                "role": "论文分析助手",
-                                "content": response,
-                                "file_name": file_name,
-                                "file_path": file_path,
-                                "url": paper_key,  # 保留URL/Filename以支持多次重新分析
-                            }
-                            st.session_state.messages.append(message)
+                            
+                            # 3. Final update to message metadata
+                            st.session_state.messages[msg_index]["content"] = response
+                            st.session_state.messages[msg_index]["file_name"] = file_name
+                            st.session_state.messages[msg_index]["file_path"] = file_path
+                            # url is already set
                         else:
                             logger.error(f"论文分析失败: {result['error']}")
                             response = result["error"]
-                            message = {
-                                "role": "论文分析助手",
-                                "content": response,
-                                "url": paper_key,  # 即使失败也保留URL
-                            }
-                            st.session_state.messages.append(message)
+                            # Final update for error
+                            st.session_state.messages[msg_index]["content"] = f"❌ 分析出错: {response}"
                         break
+                # --- Persistence Change End ---
 
             # 分析完成后清空进度显示
             progress_placeholder.empty()
