@@ -60,11 +60,14 @@ def validate_and_format_arxiv_url(url: str) -> str:
     return formatted_url
 
 
-def process_paper(input_source, prompt_name: str = "yuanbao", is_file_upload: bool = False):
+def process_paper(input_source, prompt_name: str = "yuanbao", is_file_upload: bool = False, is_local_path: bool = False):
     """处理论文并以流式方式yield结果"""
     try:
         url = ""
-        if not is_file_upload:
+        url = ""
+        if is_local_path:
+            url = os.path.basename(input_source)
+        elif not is_file_upload:
             url = input_source
             # 验证并格式化URL
             try:
@@ -104,6 +107,7 @@ def process_paper(input_source, prompt_name: str = "yuanbao", is_file_upload: bo
             total_length = 0
             
             # 获取流生成器
+            # 获取流生成器
             if is_file_upload:
                 # 保存临时文件
                 temp_dir = "temp"
@@ -112,6 +116,9 @@ def process_paper(input_source, prompt_name: str = "yuanbao", is_file_upload: bo
                 with open(file_path, "wb") as temp_f:
                     temp_f.write(input_source.getbuffer())
                 stream_gen = reader.process_paper_stream(file_path, prompt_name=prompt_name)
+            elif is_local_path:
+                # 本地文件直接处理
+                stream_gen = reader.process_paper_stream(input_source, prompt_name=prompt_name)
             else:
                 stream_gen = reader.process_paper_url_stream(url, prompt_name=prompt_name)
 
@@ -145,10 +152,26 @@ def reanalyze_paper(url: str, prompt_name: str):
     # 创建进度显示区域
     progress_placeholder = st.empty()
 
+    # 检查是否为本地文件 (根据URL格式判断)
+    is_local_file = not url.lower().startswith("http")
+    process_kwargs = {}
+    
+    if is_local_file:
+        local_path = os.path.join("temp", url)
+        if not os.path.exists(local_path):
+            st.error(f"❌ 无法重新分析：找不到本地临时文件 {local_path}。可能是文件已被清理，请重新上传。")
+            return
+        # 更新调用参数
+        process_input = local_path
+        process_kwargs = {"is_local_path": True}
+    else:
+        process_input = url
+        process_kwargs = {}
+
     # 处理论文
     with st.spinner("正在重新分析论文..."):
         full_output = ""
-        for result in process_paper(url, prompt_name):
+        for result in process_paper(process_input, prompt_name, **process_kwargs):
             if result["type"] == "chunk":
                 full_output += result["content"]
                 # 实时更新进度显示
