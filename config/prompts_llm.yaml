@@ -110,6 +110,13 @@ prompts:
 
       {text}
 
+  test_analysis:
+    description: "测试-少token"
+    template: |
+      返回论文标题和作者,100字左右
+      {text}
+
+
   phd_analysis:
     description: "博士级深度论文解读"
     # template: 将论文题目和摘要简单描述一下
