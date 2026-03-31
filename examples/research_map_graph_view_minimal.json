@@ -1,0 +1,95 @@
+{
+  "map_id": "rm:demo-ui-001",
+  "state": "ready",
+  "layout_hint": "force",
+  "nodes": [
+    {
+      "id": "paper:paper-1",
+      "kind": "paper",
+      "label": "Physics-Informed ML Survey",
+      "subtitle": "paper · 2023 · Survey Journal",
+      "size": 3,
+      "color_token": "paper",
+      "paper_ids": ["paper-1"],
+      "tags": ["Physics-Informed ML", "Scientific Computing"],
+      "collections": ["ML/PIML/Surveys"],
+      "analysis_refs": [
+        {"ref_id": "cache:paper-1", "ref_type": "history_cache", "label": "知识卡缓存"}
+      ],
+      "badges": ["主论文"],
+      "metadata": {"year": "2023", "venue": "Survey Journal"}
+    },
+    {
+      "id": "topic:physics-informed-ml",
+      "kind": "topic",
+      "label": "Physics-Informed ML",
+      "subtitle": "topic · 1 paper",
+      "size": 2,
+      "color_token": "topic",
+      "paper_ids": ["paper-1"],
+      "tags": ["Physics-Informed ML"],
+      "collections": ["ML/PIML/Surveys"],
+      "analysis_refs": [],
+      "badges": [],
+      "metadata": {"mentions": 1}
+    },
+    {
+      "id": "method:pinns",
+      "kind": "method",
+      "label": "PINNs",
+      "subtitle": "method · 1 paper",
+      "size": 2,
+      "color_token": "method",
+      "paper_ids": ["paper-1"],
+      "tags": ["PINNs"],
+      "collections": ["ML/PIML/Surveys"],
+      "analysis_refs": [],
+      "badges": ["高频方法"],
+      "metadata": {"mentions": 1}
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge:paper-1:topic",
+      "kind": "studies_topic",
+      "source": "paper:paper-1",
+      "target": "topic:physics-informed-ml",
+      "label": "研究主题",
+      "weight": 1.0,
+      "paper_ids": ["paper-1"],
+      "analysis_refs": [],
+      "metadata": {}
+    },
+    {
+      "id": "edge:paper-1:method",
+      "kind": "uses_method",
+      "source": "paper:paper-1",
+      "target": "method:pinns",
+      "label": "使用方法",
+      "weight": 1.0,
+      "paper_ids": ["paper-1"],
+      "analysis_refs": [],
+      "metadata": {}
+    }
+  ],
+  "legend": [
+    {"key": "paper", "label": "论文", "color_token": "paper", "shape": "rect"},
+    {"key": "topic", "label": "主题", "color_token": "topic", "shape": "circle"},
+    {"key": "method", "label": "方法", "color_token": "method", "shape": "circle"}
+  ],
+  "empty_state": {
+    "state": "ready",
+    "title": "",
+    "description": "",
+    "suggestions": []
+  },
+  "filters_applied": {
+    "entity_types": ["paper", "topic", "method"]
+  },
+  "stats": {
+    "paper_count": 1,
+    "node_count": 3,
+    "edge_count": 2,
+    "gap_count": 0
+  }
+}

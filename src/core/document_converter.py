@@ -158,3 +158,62 @@ def convert_url_to_text(url: str, **kwargs) -> Dict:
 
     # 调用转换
     return DocumentConverter.convert_url_to_text(url, converter_name=converter_name, **kwargs)
+
+
+# --- 默认转换器实现 ---
+
+def _markitdown_converter(file_path: Union[str, Path], **kwargs) -> Dict:
+    """使用 MarkItDown 进行转换"""
+    from markitdown import MarkItDown
+    
+    # 获取可选的 LLM 配置进行增强（如果需要）
+    llm_client = kwargs.get("llm_client")
+    llm_model = kwargs.get("llm_model")
+    
+    md = MarkItDown(llm_client=llm_client, llm_model=llm_model)
+    result = md.convert(str(file_path))
+    
+    return {
+        "text": result.text_content,
+        "text_content": result.text_content, # 针对 PaperAnalysisService 的兼容性
+        "content": result.text_content, # 针对其他模块的兼容性
+        "metadata": {
+            "title": getattr(result, "title", ""),
+            "converter": "markitdown"
+        }
+    }
+
+def _pypdf_converter(file_path: Union[str, Path], **kwargs) -> Dict:
+    """使用 pypdf 进行转换（作为 MarkItDown 缺失时的备选）"""
+    import pypdf
+    
+    reader = pypdf.PdfReader(str(file_path))
+    text = ""
+    for page in reader.pages:
+        text += page.extract_text() + "\n"
+        
+    return {
+        "text": text,
+        "text_content": text,
+        "content": text,
+        "metadata": {
+            "pages": len(reader.pages),
+            "converter": "pypdf"
+        }
+    }
+
+# 自动注册可用转换器
+try:
+    import markitdown
+    DocumentConverter.register("markitdown", _markitdown_converter)
+except ImportError:
+    pass
+
+try:
+    import pypdf
+    DocumentConverter.register("pypdf", _pypdf_converter)
+    # 如果没有 markitdown，将 pypdf 设为默认备选
+    if "markitdown" not in DocumentConverter._converters:
+         DocumentConverter.register("markitdown", _pypdf_converter)
+except ImportError:
+    pass

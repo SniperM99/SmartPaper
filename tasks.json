@@ -1,0 +1,30 @@
+{
+  "/tmp/test_papers/paper1.pdf_test_analysis": {
+    "source": "/tmp/test_papers/paper1.pdf",
+    "prompt_name": "test_analysis",
+    "status": "failed",
+    "created_at": "2026-03-09T11:25:08.654104",
+    "started_at": "2026-03-09T11:25:31.460540",
+    "completed_at": "2026-03-09T11:25:31.460702",
+    "output_path": "",
+    "error_message": "未找到转换器: markitdown，且默认转换器'markitdown'也不可用",
+    "metrics": {
+      "token_usage": 0,
+      "duration": 0.000162
+    }
+  },
+  "/tmp/test_papers/paper2.pdf_test_analysis": {
+    "source": "/tmp/test_papers/paper2.pdf",
+    "prompt_name": "test_analysis",
+    "status": "failed",
+    "created_at": "2026-03-09T11:25:08.655256",
+    "started_at": "2026-03-09T11:25:31.460824",
+    "completed_at": "2026-03-09T11:25:31.460911",
+    "output_path": "",
+    "error_message": "未找到转换器: markitdown，且默认转换器'markitdown'也不可用",
+    "metrics": {
+      "token_usage": 0,
+      "duration": 8.7e-05
+    }
+  }
+}

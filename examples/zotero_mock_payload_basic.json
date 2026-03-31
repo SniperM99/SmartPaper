@@ -1,0 +1,57 @@
+{
+  "collections": [
+    {
+      "key": "C1",
+      "name": "Survey"
+    },
+    {
+      "key": "C2",
+      "name": "PINN",
+      "parentCollection": "C1"
+    }
+  ],
+  "items": [
+    {
+      "key": "ITEM1",
+      "version": 21,
+      "libraryID": 7,
+      "libraryType": "user",
+      "itemType": "journalArticle",
+      "title": "Physics-Informed Biomedical Models",
+      "creators": [
+        {
+          "firstName": "Alice",
+          "lastName": "Wang"
+        }
+      ],
+      "abstractNote": "Test abstract",
+      "publicationTitle": "AI Journal",
+      "date": "2025-07-01",
+      "DOI": "10.1000/xyz123",
+      "url": "https://example.com/paper",
+      "citationKey": "wang2025pibm",
+      "tags": [
+        {
+          "tag": "PINN"
+        },
+        {
+          "tag": "Biomedical",
+          "type": 1
+        }
+      ],
+      "collections": [
+        "C2"
+      ]
+    },
+    {
+      "key": "ATT1",
+      "itemType": "attachment",
+      "parentItem": "ITEM1",
+      "title": "Main PDF",
+      "contentType": "application/pdf",
+      "linkMode": "imported_file",
+      "path": "storage:paper.pdf",
+      "md5": "ABCDEF123456"
+    }
+  ]
+}

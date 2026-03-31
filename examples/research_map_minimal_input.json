@@ -1,0 +1,66 @@
+[
+  {
+    "paper_id": "paper-survey-2023",
+    "metadata": {
+      "title": "Physics-Informed Machine Learning Survey",
+      "year": "2023",
+      "venue": "Survey Journal",
+      "keywords": ["Physics-Informed ML", "Scientific Computing"]
+    },
+    "analysis": {
+      "summary_one_sentence": "A survey of physics-informed machine learning paradigms.",
+      "research_problem": "How to combine physical priors with machine learning models?",
+      "topic_tags": ["Physics-Informed ML"],
+      "method_tags": ["PINNs", "Neural Operators"],
+      "dataset_tags": [],
+      "application_tags": ["Scientific Computing", "Inverse Problems"],
+      "limitations": ["Complex geometry generalization remains underexplored."],
+      "future_work": ["Need better out-of-distribution evaluation."],
+      "method": {"overview": "Inject physics priors into model architecture and loss."},
+      "experiments": {"datasets": [], "metrics": ["RMSE"]}
+    }
+  },
+  {
+    "paper_id": "paper-mfg-unknown",
+    "metadata": {
+      "title": "Manufacturing Transfer for PIML",
+      "year": null,
+      "venue": "Workshop",
+      "keywords": ["Manufacturing"]
+    },
+    "analysis": {
+      "summary_one_sentence": "Applies physics-informed ML ideas to manufacturing tasks.",
+      "research_problem": "How to transfer PIML into manufacturing processes?",
+      "topic_tags": [],
+      "method_tags": ["PINNs"],
+      "dataset_tags": ["ShopFloorBench"],
+      "application_tags": ["Manufacturing"],
+      "limitations": [],
+      "future_work": ["Need broader evaluation benchmarks for manufacturing tasks."],
+      "method": {"overview": "Use PINNs for surrogate process modelling."},
+      "experiments": {"datasets": ["ShopFloorBench"], "metrics": []}
+    }
+  },
+  {
+    "paper_id": "paper-zotero-2025",
+    "metadata": {
+      "title": "Biomedical PIML via Zotero Import",
+      "year": "2025",
+      "venue": "BioML",
+      "keywords": ["Biomedical Research"]
+    },
+    "source": {"type": "zotero", "path": "", "url": ""},
+    "analysis": {
+      "summary_one_sentence": "A knowledge-card-ready paper imported from Zotero and enriched downstream.",
+      "research_problem": "How can physics-informed learning improve biomedical modeling?",
+      "topic_tags": ["Biomedical Research"],
+      "method_tags": [],
+      "dataset_tags": [],
+      "application_tags": ["Biomedical Research"],
+      "limitations": ["Clinical validation remains limited."],
+      "future_work": [],
+      "method": {"overview": "Hybrid biomedical surrogate modelling."},
+      "experiments": {"datasets": [], "metrics": ["MAE"]}
+    }
+  }
+]

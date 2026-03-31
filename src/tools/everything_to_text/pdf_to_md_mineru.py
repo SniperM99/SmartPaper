@@ -37,12 +37,30 @@
 import os
 import json
 import requests
-from modelscope import snapshot_download
-from magic_pdf.data.data_reader_writer import FileBasedDataWriter, FileBasedDataReader
-from magic_pdf.data.dataset import PymuDocDataset
-from magic_pdf.model.doc_analyze_by_custom_model import doc_analyze
-from magic_pdf.config.enums import SupportedPdfParseMethod
 from loguru import logger
+
+try:
+    from modelscope import snapshot_download
+    from magic_pdf.data.data_reader_writer import FileBasedDataWriter, FileBasedDataReader
+    from magic_pdf.data.dataset import PymuDocDataset
+    from magic_pdf.model.doc_analyze_by_custom_model import doc_analyze
+    from magic_pdf.config.enums import SupportedPdfParseMethod
+    _MINERU_IMPORT_ERROR = None
+except Exception as e:  # pragma: no cover - 依赖缺失时用于可收集性
+    snapshot_download = None
+    FileBasedDataWriter = None
+    FileBasedDataReader = None
+    PymuDocDataset = None
+    doc_analyze = None
+    SupportedPdfParseMethod = None
+    _MINERU_IMPORT_ERROR = e
+
+
+def _require_mineru_dependencies():
+    if _MINERU_IMPORT_ERROR is not None:
+        raise RuntimeError(
+            "MinerU 相关依赖未安装，请安装 modelscope / magic_pdf 后再调用该功能"
+        ) from _MINERU_IMPORT_ERROR
 
 
 def download_json(url):
@@ -54,6 +72,7 @@ def download_json(url):
 
 def download_and_setup_models():
     """下载并设置必要的模型文件"""
+    _require_mineru_dependencies()
     mineru_patterns = [
         "models/Layout/LayoutLMv3/*",
         "models/Layout/YOLO/*",
@@ -87,6 +106,7 @@ def download_and_setup_models():
 
 
 def mineru_pdf2md(pdf_path, output_base_dir="outputs"):
+    _require_mineru_dependencies()
     """
     功能描述: 将PDF文件处理为Markdown格式。
 

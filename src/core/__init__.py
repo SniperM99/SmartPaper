@@ -47,7 +47,4 @@ def get_smartpaper_root_path():
 
 SMART_PATH = get_smartpaper_root_path()
 
-from .document_converter import convert_to_text
-from . import register_converters
-
-__all__ = ["convert_to_text", "SMART_PATH"]
+__all__ = ["SMART_PATH"]

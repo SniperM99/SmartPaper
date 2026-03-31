@@ -1,932 +1,1339 @@
+"""SmartPaper Streamlit 工作台
+
+统一串联论文导入、论文库管理、跨论文分析、研究映射与 Zotero 接入入口。
 """
-SmartPaper - Streamlit Web界面版本
-
-运行命令:
-    streamlit run gui_streamlit_get_prompt_mode_paper.py
-
-功能:
-    提供Web界面让用户输入论文URL，选择提示词模板，并实时显示分析结果
-"""
-import sys
 import os
+import re
+import time
+import uuid
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.join(BASE_DIR, "src"))
-
-import os
 import streamlit as st
 from loguru import logger
-import yaml
-import re
-from core.smart_paper_core import SmartPaper
-from core.prompt_manager import list_prompts
-from typing import List, Dict
-import sys
-import time
-import uuid  # 用于生成用户唯一ID
-import traceback  # 用于打印完整的错误栈
+
+try:
+    from application.multi_paper_service import MultiPaperService
+    from application.paper_analysis_service import PaperAnalysisService
+    from application.workbench_service import WorkbenchService
+    from interfaces.web.workbench_state import (
+        build_overview_metrics,
+        build_workflow_steps,
+        compare_panel_state,
+        create_zotero_placeholder_batch,
+        ensure_session_defaults,
+        filter_library_entries,
+        research_map_scope,
+    )
+    from src.core.config_loader import load_config
+    from src.core.prompt_manager import get_available_options
+except ImportError as e:
+    st.error(f"严重导入错误: {e}")
+    st.stop()
+
+WORKSPACES = {
+    "overview": "🧭 工作台总览",
+    "intake": "📥 导入与解析",
+    "library": "📚 论文库",
+    "analysis": "🧠 分析工作流",
+    "zotero": "🗂️ Zotero 集成",
+}
 
 
 def validate_and_format_arxiv_url(url: str) -> str:
-    """验证并格式化arXiv URL
-
-    将abs格式转换为pdf格式，并验证URL格式
-
-    Args:
-        url: 输入的arXiv URL
-
-    Returns:
-        格式化后的URL
-
-    Raises:
-        ValueError: 如果URL格式不正确
-    """
-    logger.debug(f"验证URL格式: {url}")
-    # 检查是否是arXiv URL
     arxiv_pattern = r"https?://arxiv\.org/(abs|pdf)/(\d+\.\d+)(v\d+)?"
-    match = re.match(arxiv_pattern, url)
-
+    match = re.match(arxiv_pattern, url.strip())
     if not match:
-        logger.warning(f"URL格式不正确: {url}")
-        raise ValueError("URL格式不正确，请提供有效的arXiv URL")
-
-    # 提取arXiv ID
+        raise ValueError("URL 格式不正确，请提供有效的 arXiv URL")
     arxiv_id = match.group(2)
     version = match.group(3) or ""
-
-    # 确保使用PDF格式
-    formatted_url = f"https://arxiv.org/pdf/{arxiv_id}{version}"
-
-    if match.group(1) == "abs":
-        logger.info(f"URL格式已从abs转换为pdf: {url} -> {formatted_url}")
-    else:
-        logger.debug(f"URL格式已验证: {formatted_url}")
-
-    return formatted_url
+    return f"https://arxiv.org/pdf/{arxiv_id}{version}"
 
 
-def process_paper(input_source, prompt_name: str = "yuanbao", is_file_upload: bool = False, is_local_path: bool = False):
-    """处理论文并以流式方式yield结果"""
-    try:
-        url = ""
-        url = ""
-        if is_local_path:
-            url = os.path.basename(input_source)
-        elif not is_file_upload:
-            url = input_source
-            # 验证并格式化URL
-            try:
-                url = validate_and_format_arxiv_url(url)
-            except ValueError as e:
-                logger.error(f"URL验证失败: {str(e)}")
-                yield {"type": "final", "success": False, "error": str(e)}
-                return
-        else:
-            # 如果是文件上传
-            uploaded_file = input_source
-            url = uploaded_file.name  # 使用文件名作为标识
-
-        logger.info(f"使用提示词模板: {prompt_name}")
-        logger.info(f"处理目标: {url}")
-
-        # 创建输出目录及输出文件，文件名中加入用户 session_id 避免不同用户间冲突
-        output_dir = "outputs"
-        os.makedirs(output_dir, exist_ok=True)
-        session_id = st.session_state.get("session_id", "default")
-        
-        # 安全的文件名处理
-        safe_name = "".join([c for c in url.split("/")[-1] if c.isalpha() or c.isdigit() or c in ".-_"])
-        output_file = os.path.join(
-            output_dir, f'analysis_{session_id}_{safe_name}_prompt_{prompt_name}.md'
-        )
-        logger.info(f"输出文件将保存至: {output_file}\n")
-
-        # 初始化SmartPaper
-        logger.debug("初始化SmartPaper")
-        reader = SmartPaper(output_format="markdown")
-
-        # 以写入模式打开文件，覆盖旧内容
-        logger.debug(f"开始流式处理论文: {url}")
-        with open(output_file, "w", encoding="utf-8") as f:
-            chunk_count = 0
-            total_length = 0
-            
-            # 获取流生成器
-            # 获取流生成器
-            if is_file_upload:
-                # 保存临时文件
-                temp_dir = "temp"
-                os.makedirs(temp_dir, exist_ok=True)
-                file_path = os.path.join(temp_dir, url)
-                with open(file_path, "wb") as temp_f:
-                    temp_f.write(input_source.getbuffer())
-                stream_gen = reader.process_paper_stream(file_path, prompt_name=prompt_name)
-            elif is_local_path:
-                # 本地文件直接处理
-                stream_gen = reader.process_paper_stream(input_source, prompt_name=prompt_name)
-            else:
-                stream_gen = reader.process_paper_url_stream(url, prompt_name=prompt_name)
-
-            for chunk in stream_gen:
-                chunk_count += 1
-                total_length += len(chunk)
-                f.write(chunk)
-                if chunk_count % 10 == 0:  # 每10个块记录一次日志，避免日志过多
-                    logger.debug(f"已接收 {chunk_count} 个响应块，总长度: {total_length} 字符")
-                yield {"type": "chunk", "content": chunk}
-
-        logger.info(f"分析完成，共接收 {chunk_count} 个响应块，总长度: {total_length} 字符")
-        logger.info(f"分析结果已保存到: {output_file}")
-        yield {"type": "final", "success": True, "file_path": output_file}
-
-    except Exception as e:
-        error_msg = f"处理失败: {str(e)}"
-        logger.error(error_msg)
-        yield {"type": "chunk", "content": f"❌ **错误**: {error_msg}"}
-        yield {"type": "final", "success": False, "error": error_msg}
+def init_session_state() -> None:
+    defaults = ensure_session_defaults({"session_id": uuid.uuid4().hex})
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
 
 
-def reanalyze_paper(url: str, prompt_name: str):
-    """重新分析指定URL的论文"""
-    logger.info(f"重新分析论文: {url}，使用提示词模板: {prompt_name}")
-    # 添加用户请求消息到聊天历史
-    st.session_state.messages.append(
-        {"role": "user", "content": f"请重新分析论文: {url} 使用提示词模板: {prompt_name}"}
-    )
-
-    # 创建进度显示区域
-    progress_placeholder = st.empty()
-
-    # 检查是否为本地文件 (根据URL格式判断)
-    is_local_file = not url.lower().startswith("http")
-    process_kwargs = {}
-    
-    if is_local_file:
-        local_path = os.path.join("temp", url)
-        if not os.path.exists(local_path):
-            st.error(f"❌ 无法重新分析：找不到本地临时文件 {local_path}。可能是文件已被清理，请重新上传。")
-            return
-        # 更新调用参数
-        process_input = local_path
-        process_kwargs = {"is_local_path": True}
-    else:
-        process_input = url
-        process_kwargs = {}
-
-    # 处理论文
-    with st.spinner("正在重新分析论文..."):
-        full_output = ""
-        for result in process_paper(process_input, prompt_name, **process_kwargs):
-            if result["type"] == "chunk":
-                full_output += result["content"]
-                # 实时更新进度显示
-                progress_placeholder.markdown(full_output)
-            elif result["type"] == "final":
-                if result["success"]:
-                    response = full_output
-                    file_path = result["file_path"]
-                    file_name = os.path.basename(file_path)
-                    logger.info(f"重新分析成功，结果保存至: {file_path}")
-                    new_message = {
-                        "role": "论文分析助手",
-                        "content": response,
-                        "file_name": file_name,
-                        "file_path": file_path,
-                        "url": url,  # 保留URL以支持多次重新分析
-                    }
-                else:
-                    logger.error(f"重新分析失败: {result['error']}")
-                    response = result["error"]
-                    new_message = {
-                        "role": "论文分析助手",
-                        "content": response,
-                        "url": url,  # 即使失败也保留URL
-                    }
-                st.session_state.messages.append(new_message)
-                break
-
-    # 清空进度显示区域
-    progress_placeholder.empty()
-
-    # 刷新页面以更新聊天历史
-    logger.debug("重新加载页面以更新聊天历史")
+def goto_workspace(workspace_key: str) -> None:
+    st.session_state.workspace = workspace_key
     st.rerun()
 
 
-def main():
-    """主函数"""
-    logger.info("启动SmartPaperGUI界面")
+def get_entry_by_key(cache_key: Optional[str], entries: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not cache_key:
+        return None
+    for entry in entries:
+        if entry["cache_key"] == cache_key:
+            return entry
+    return None
 
-    # 添加自定义CSS样式
-    st.markdown(
-        """
-    <style>
-        /* 整体页面样式 */
-        .main {
-            background-color: #f8f9fa;
-            padding: 20px;
-        }
 
-        /* 标题样式 */
-        h1 {
-            color: #1e3a8a;
-            font-weight: 700;
-            margin-bottom: 30px;
-            text-align: center;
-            padding-bottom: 10px;
-            border-bottom: 2px solid #3b82f6;
-        }
+def process_paper(
+    input_source,
+    role: str,
+    task: str,
+    domain: str,
+    use_chain: bool = False,
+    is_file_upload: bool = False,
+    is_local_path: bool = False,
+):
+    try:
+        if is_local_path:
+            display_name = os.path.basename(str(input_source))
+        elif is_file_upload:
+            display_name = input_source.name
+        else:
+            display_name = validate_and_format_arxiv_url(str(input_source))
 
-        /* 副标题样式 */
-        h3 {
-            color: #1e40af;
-            font-weight: 600;
-            margin-top: 20px;
-            margin-bottom: 15px;
-            padding-left: 10px;
-            border-left: 4px solid #3b82f6;
-        }
+        output_dir = "outputs"
+        os.makedirs(output_dir, exist_ok=True)
+        safe_name = "".join(c for c in display_name.split("/")[-1] if c.isalnum() or c in ".-_")
+        output_file = os.path.join(output_dir, f"analysis_{st.session_state.session_id}_{safe_name}_{task}.md")
+        service = PaperAnalysisService(load_config())
 
-        /* 聊天消息容器 */
-        .stChatMessage {
-            border-radius: 10px;
-            margin-bottom: 15px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-        }
+        with open(output_file, "w", encoding="utf-8") as f:
+            if is_file_upload:
+                temp_dir = Path("temp")
+                temp_dir.mkdir(exist_ok=True)
+                file_path = temp_dir / display_name
+                with open(file_path, "wb") as temp_f:
+                    temp_f.write(input_source.getbuffer())
+                stream_gen = service.analyze_stream(str(file_path), role=role, task=task, domain=domain)
+            elif is_local_path:
+                stream_gen = service.analyze_stream(str(input_source), role=role, task=task, domain=domain)
+            else:
+                stream_gen = service.analyze_url_stream(display_name, role=role, task=task, domain=domain)
 
-        /* 按钮样式 */
-        .stButton>button {
-            border-radius: 8px;
-            font-weight: 500;
-            transition: all 0.3s ease;
-        }
+            for chunk in stream_gen:
+                f.write(chunk)
+                yield {"type": "chunk", "content": chunk}
 
-        .stButton>button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-        }
+        yield {"type": "final", "success": True, "file_path": output_file}
+    except Exception as exc:
+        logger.exception("处理论文失败")
+        yield {"type": "chunk", "content": f"\n\n❌ **错误**: {exc}"}
+        yield {"type": "final", "success": False, "error": str(exc)}
 
-        /* 下载按钮样式 */
-        .stDownloadButton>button {
-            background-color: #4f46e5;
-            color: white;
-            border: none;
-            padding: 5px 15px;
-            border-radius: 6px;
-        }
 
-        /* 侧边栏样式 */
-        .css-1d391kg {
-            background-color: #f1f5f9;
-            padding: 20px 10px;
-        }
+def render_profile_editor(workbench_service: WorkbenchService) -> None:
+    profile = workbench_service.get_profile()
+    with st.expander("👤 我的科研画像", expanded=False):
+        ctx = profile.get("user_context", {})
+        new_role = st.text_input("身份/角色", value=ctx.get("role", "PhD Student"))
+        new_area = st.text_input("研究领域", value=ctx.get("research_area", "Industrial AI"))
+        new_project = st.text_area("当前课题", value=ctx.get("current_project", ""))
+        interests = profile.get("interests", [])
+        new_interests = st.text_area("关注关键词（分号分隔）", value="; ".join(interests))
+        focus = profile.get("analysis_focus", [])
+        new_focus = st.text_area("分析侧重（分号分隔）", value="; ".join(focus))
+        if st.button("保存科研画像", use_container_width=True):
+            profile["user_context"] = {
+                "role": new_role,
+                "research_area": new_area,
+                "current_project": new_project,
+            }
+            profile["interests"] = [i.strip() for i in new_interests.split(";") if i.strip()]
+            profile["analysis_focus"] = [i.strip() for i in new_focus.split(";") if i.strip()]
+            workbench_service.update_profile(profile)
+            st.success("科研画像已更新")
+            st.rerun()
 
-        /* 输入框样式 */
-        .stTextInput>div>div>input {
-            border-radius: 8px;
-            border: 1px solid #d1d5db;
-            padding: 10px;
-        }
-
-        /* URL输入框高亮样式 */
-        .url-input {
-            border: 2px solid #3b82f6 !important;
-            background-color: #eff6ff !important;
-            box-shadow: 0 0 10px rgba(59, 130, 246, 0.3) !important;
-        }
-
-        /* 选择框样式 */
-        .stSelectbox>div>div {
-            border-radius: 8px;
-        }
-    </style>
-    """,
-        unsafe_allow_html=True,
-    )
-
-    # 设置页面标题
-    st.title("赋睿论文助手")
-    st.markdown(
-        """
-    <div style="color: gray; font-size: 0.8em;">
-        一个迷你助手，帮助您快速阅读论文
-    </div>
-    """,
-        unsafe_allow_html=True,
-    )
-
-    # 初始化会话状态
-    if "messages" not in st.session_state:
-        logger.debug("初始化会话状态: messages")
-        st.session_state.messages = []
-    if "processed_papers" not in st.session_state:
-        logger.debug("初始化会话状态: processed_papers")
-        st.session_state.processed_papers = {}
-    # 为每个用户生成唯一session_id，防止不同用户文件输出冲突
-    if "session_id" not in st.session_state:
-        st.session_state.session_id = uuid.uuid4().hex
-
-    # 侧边栏配置：仅保留全局配置（提示词模板）
+def render_sidebar(options: Dict[str, Any], entries: List[Dict[str, Any]], workbench_service: WorkbenchService) -> Dict[str, str]:
     with st.sidebar:
-        st.header("配置选项")
-        # 显示可用的提示词模板
-        prompt_options = list_prompts()
-        logger.debug(f"加载提示词模板，共 {len(prompt_options)} 个")
-        
-        # 设置默认选中项
-        options = list(prompt_options.keys())
-        default_index = 0
-        target_default = "phd_analysis"
-        if target_default in options:
-            default_index = options.index(target_default)
-            
-        selected_prompt = st.selectbox(
-            "选择提示词模板",
-            options=options,
-            index=default_index,
-            format_func=lambda x: f"{x}: {prompt_options[x]}",
-            help="选择用于分析的提示词模板",
+        st.header("🧭 工作台导航")
+        # 使用 selectbox 替代 radio 避免双击问题
+        selected_workspace = st.selectbox(
+            "当前页面",
+            options=list(WORKSPACES.keys()),
+            format_func=lambda key: WORKSPACES[key],
+            index=list(WORKSPACES.keys()).index(st.session_state.workspace),
+            key="workspace_selector"
         )
-        logger.debug(f"用户选择提示词模板: {selected_prompt}")
+        if selected_workspace != st.session_state.workspace:
+            st.session_state.workspace = selected_workspace
+            st.rerun()
 
-    # 创建顶部标签页
-    tab_analysis, tab_history = st.tabs(["🚀 当前分析", "📚 历史记录"])
+        active_entry = get_entry_by_key(st.session_state.active_paper_key, entries)
+        st.caption(
+            f"论文库 {len(entries)} 篇｜当前主论文 {active_entry['title'] if active_entry else '未选择'}｜对比集 {len(st.session_state.compare_keys)} 篇"
+        )
+        st.progress(min(len(st.session_state.compare_keys), 5) / 5 if entries else 0.0, text="多论文对比准备度")
 
-    # === 历史记录标签页 ===
-    with tab_history:
-        st.header("📚 论文分析历史")
-        from core.history_manager import HistoryManager
-        import pandas as pd
-        
-        hm = HistoryManager()
-        history = hm.list_history()
-        
-        if history:
-            # --- 删除确认区域 ---
-            if "delete_confirm_key" in st.session_state:
-                 confirm_key = st.session_state.delete_confirm_key
-                 # 查找对应的文件以便显示提示
-                 entry_to_del = next((item for item in history if item["cache_key"] == confirm_key), None)
-                 fname = entry_to_del['file_name'] if entry_to_del else "该记录"
-                 
-                 st.warning(f"⚠️ 确定要删除记录: {fname} 吗？(如果是本地文件，同时也会删除结果文件)")
-                 col_conf_1, col_conf_2, col_conf_3 = st.columns([0.1, 0.1, 0.8])
-                 with col_conf_1:
-                     if st.button("✅ 确认", key="btn_confirm_del"):
-                         if hm.delete_history_item(confirm_key, delete_file=True):
-                                st.success("已删除")
-                                del st.session_state.delete_confirm_key
-                                time.sleep(0.5)
-                                st.rerun()
-                         else:
-                                st.error("删除失败")
-                 with col_conf_2:
-                     if st.button("❌ 取消", key="btn_cancel_del"):
-                         del st.session_state.delete_confirm_key
-                         st.rerun()
-                 st.markdown("---")
+        st.markdown("---")
+        st.subheader("🎭 分析配置")
+        sel_role = st.selectbox(
+            "角色",
+            options=list(options["roles"].keys()),
+            format_func=lambda x: f"{x}: {options['roles'][x]}",
+            index=0,
+        )
+        sel_domain = st.selectbox(
+            "领域背景",
+            options=list(options["domains"].keys()),
+            format_func=lambda x: f"{x}: {options['domains'][x]}",
+            index=0,
+        )
+        task_options = {**options["tasks"], **options["prompts"]}
+        default_task = "phd_analysis" if "phd_analysis" in task_options else list(task_options.keys())[0]
+        sel_task = st.selectbox(
+            "任务 / 预设",
+            options=list(task_options.keys()),
+            format_func=lambda x: f"{x}: {task_options[x]}",
+            index=list(task_options.keys()).index(default_task),
+        )
+        use_chain = st.checkbox("开启多轮深度分析链", value=False)
+        st.caption("📝 多轮分析链会进行更深度的对话式分析，逐步挖掘论文的核心内容和方法论细节")
 
-            # 简单的统计信息
-        # === Search & Filter ===
-        search_term = st.text_input("🔍 搜索历史记录", placeholder="输入文件名或关键词快速筛选...", label_visibility="collapsed")
-        
-        # Filter logic
-        filtered_history = []
-        if search_term:
-            search_lower = search_term.lower()
-            for item in history:
-                name = item.get('file_name', '') or os.path.basename(item.get('original_source', ''))
-                if search_lower in name.lower() or search_lower in item.get('prompt_name', '').lower():
-                    filtered_history.append(item)
-        else:
-            filtered_history = history
+        st.markdown("---")
+        render_profile_editor(workbench_service)
+    return {"role": sel_role, "domain": sel_domain, "task": sel_task, "use_chain": use_chain}
 
-        if filtered_history:
-            # === Pagination ===
-            ITEMS_PER_PAGE = 20
-            total_items = len(filtered_history)
-            total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
-            
-            if total_pages > 1:
-                col_pg1, col_pg2 = st.columns([0.85, 0.15])
-                with col_pg2:
-                    current_page = st.number_input("页码", min_value=1, max_value=total_pages, value=1, step=1, label_visibility="collapsed")
-            else:
-                current_page = 1
-                
-            start_idx = (current_page - 1) * ITEMS_PER_PAGE
-            end_idx = start_idx + ITEMS_PER_PAGE
-            displayed_history = filtered_history[start_idx:end_idx]
 
-            # --- HEADER ---
-            # Compact header: Time | Template | File Info | Delete
-            st.markdown("""
-            <style>
-            .history-header { font-weight: bold; color: #666; font-size: 0.9em; padding-bottom: 5px; border-bottom: 1px solid #eee; }
-            .history-row { padding: 5px 0; border-bottom: 1px solid #f0f0f0; }
-            .file-name { font-weight: 600; color: #1e3a8a; font-size: 1.05em; }
-            .compact-btn button { padding: 0px 8px !important; height: 28px !important; min-height: 0px !important; font-size: 0.8em !important; }
-            </style>
-            """, unsafe_allow_html=True)
-            
-            h_cols = st.columns([0.15, 0.12, 0.63, 0.1])
-            h_cols[0].markdown(":grey[分析时间]")
-            h_cols[1].markdown(":grey[模板]")
-            h_cols[2].markdown(":grey[论文解析内容与操作]")
-            h_cols[3].markdown(":grey[删除]")
-            # st.markdown("<div style='margin-bottom: 5px;'></div>", unsafe_allow_html=True) # Spacer
+def render_overview(entries: List[Dict[str, Any]]) -> None:
+    st.header("🧭 SmartPaper 统一工作台")
+    st.caption("推荐流程：导入解析 → 论文入库 → 单篇查看/追溯 → 多篇对比 → 研究映射 → Zotero 导入补全")
 
-            # --- LIST ---
-            for idx, entry in enumerate(displayed_history):
-                # Use a container for better grouping (optional, but keeps css scope tight if needed)
-                with st.container():
-                     # Main Row Layout
-                    cols = st.columns([0.15, 0.12, 0.63, 0.1])
-                    
-                    # 1. Time
-                    ts = pd.to_datetime(entry['timestamp'], unit='s').strftime('%m-%d %H:%M')
-                    cols[0].caption(ts)
-                    
-                    # 2. Template
-                    p_name = entry['prompt_name']
-                    cols[1].caption(p_name)
-                    
-                    # 3. File Info & Actions (Combined for compactness)
-                    source_name = entry['file_name'] or os.path.basename(entry['original_source'])
-                    full_source_path = entry.get('original_source', '')
-                    is_local = full_source_path and os.path.exists(full_source_path)
-                    
-                    with cols[2]:
-                        # First line: File Name as a Clickable Button (Triggers Open)
-                        # We use help text to show path, and make it look primary or secondary depending on preference
-                        help_txt = f"点击打开源文件: {full_source_path}" if is_local else "远程文件无法直接打开"
-                        
-                        # Use a custom key based on cache_key
-                        if st.button(f"📄 {source_name}", key=f"title_btn_{entry['cache_key']}", help=help_txt, disabled=not is_local):
-                             try:
-                                 import subprocess
-                                 subprocess.run(["open", full_source_path], check=True)
-                                 st.toast(f"正在打开: {source_name}")
-                             except Exception as e:
-                                 st.error(f"打开失败: {e}")
-                        
-                        # Expander for details (Below the button)
-                        
-                        # Expander for details (Below the buttons, but within the main column flow? Streamlit expander takes full width)
-                        # So we put expander BELOW the columns.
-                    
-                    # 4. Delete
-                    with cols[3]:
-                        if st.button("🗑️", key=f"dl_{entry['cache_key']}"):
-                            st.session_state.delete_confirm_key = entry['cache_key']
-                            st.rerun()
+    metrics = build_overview_metrics(entries, st.session_state.active_paper_key, st.session_state.compare_keys, st.session_state.zotero_batches)
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("论文总数", metrics["paper_count"])
+    col2.metric("当前主论文", metrics["active_paper_count"])
+    col3.metric("对比集合", metrics["compare_count"])
+    col4.metric("Zotero 批次", metrics["zotero_batch_count"])
 
-                    # Detail Expander (Full Width)
-                    with st.expander("👁️ 查看详细解析", expanded=False):
-                        file_path = entry['file_path']
-                        if os.path.exists(file_path):
-                            st.info(f"文件位置: {file_path}")
-                            with open(file_path, "r", encoding="utf-8") as f:
-                                st.markdown(f.read())
-                        else:
-                            st.error("结果文件已丢失")
-                    
-                    # Divider (Minimal)
-                    st.markdown("<hr style='margin: 5px 0; border-top: 1px solid #eee;'>", unsafe_allow_html=True)
-
-            # Pagination info footer
-            st.caption(f"显示 {start_idx+1}-{min(end_idx, total_items)} / 共 {total_items} 条记录")
-
-        else:
-            if search_term:
-                 st.info("🔍 未找到匹配的记录")
-            else:
-                 st.info("暂无历史记录")
+    quick1, quick2, quick3, quick4 = st.columns(4)
+    if quick1.button("去导入解析", use_container_width=True):
+        goto_workspace("intake")
+    if quick2.button("查看论文库", use_container_width=True):
+        goto_workspace("library")
+    if quick3.button("进入分析流", use_container_width=True):
+        goto_workspace("analysis")
+    if quick4.button("打开 Zotero", use_container_width=True):
+        goto_workspace("zotero")
 
     st.markdown("---")
+    left, right = st.columns([0.6, 0.4])
+    with left:
+        st.subheader("近期论文")
+        if not entries:
+            st.info("当前论文库为空，请先前往“导入与解析”。")
+        else:
+            for entry in entries[:5]:
+                with st.container(border=True):
+                    st.markdown(f"**{entry['title']}**")
+                    st.caption(f"{entry['year']} · {entry['venue']} · {entry['prompt_name']}")
+                    st.write(entry['summary'])
+                    action_col1, action_col2 = st.columns(2)
+                    if action_col1.button("设为主论文", key=f"overview_active_{entry['cache_key']}", use_container_width=True):
+                        st.session_state.active_paper_key = entry["cache_key"]
+                        goto_workspace("analysis")
+                    if action_col2.button("加入对比", key=f"overview_compare_{entry['cache_key']}", use_container_width=True):
+                        if entry["cache_key"] not in st.session_state.compare_keys:
+                            st.session_state.compare_keys.append(entry["cache_key"])
+                        st.success("已加入对比集合")
+    with right:
+        st.subheader("当前工作流状态")
+        for item in build_workflow_steps(entries, st.session_state.active_paper_key, st.session_state.compare_keys):
+            st.write(f"- **{item['step']}**：{item['status']}")
+        if st.session_state.last_analysis_output:
+            st.markdown("---")
+            st.subheader("最近一次解析结果")
+            st.code(st.session_state.last_analysis_output, language="markdown")
 
-    # === 当前分析标签页 ===
-    with tab_analysis:
-        st.subheader("选择输入方式")
-        # 将原本在侧边栏的输入控件移动到这里
-        input_type = st.radio(
-            "输入源", 
-            ["arXiv URL", "本地PDF文件", "本地目录 (批量)"], 
-            horizontal=True,
-            key="input_source_radio"
-        )
 
+def render_import_workspace(config: Dict[str, str]) -> None:
+    st.header("📥 导入与解析")
+    st.caption("统一支持 arXiv、本地 PDF、目录批量导入，并为 Zotero 导入预留同样的后续流转入口。")
+
+    tab1, tab2, tab3 = st.tabs(["单篇解析", "批量目录", "Zotero 导入入口"])
+
+    with tab1:
+        input_type = st.radio("输入源", ["arXiv URL", "本地 PDF"], horizontal=True)
         paper_input = None
         is_file_upload = False
-        is_batch_mode = False
-        paper_url_display = "" # 用于显示的标识
-
         if input_type == "arXiv URL":
-            # 示例URL列表
-            example_urls = [
-                "https://arxiv.org/pdf/2305.12002",
-                "https://arxiv.org/abs/2310.06825",
-                "https://arxiv.org/pdf/2303.08774",
-                "https://arxiv.org/abs/2307.09288",
-                "https://arxiv.org/pdf/2312.11805",
-            ]
-
-            col_ex, col_in = st.columns([1, 2])
-            with col_ex:
-                # 创建示例URL选择器
-                selected_example = st.selectbox(
-                    "选择示例论文",
-                    options=example_urls,
-                    format_func=lambda x: x.split("/")[-1] if "/" in x else x,
-                    help="选择一个预设的论文URL作为示例",
-                )
-
-            with col_in:
-                # 输入论文URL
-                paper_url = st.text_input(
-                    "论文URL",
-                    value=selected_example,
-                    help="输入要分析的论文URL (支持arXiv URL，自动转换为PDF格式)",
-                    key="paper_url_input",
-                )
-            
-            paper_input = paper_url
-            paper_url_display = paper_url
-            
-            if paper_url != selected_example:
-                logger.debug(f"用户输入论文URL: {paper_url}")
-
-        elif input_type == "本地目录 (批量)":
-            is_batch_mode = True
-            st.info("请输入包含PDF文件的本地目录绝对路径，系统将递归分析所有文件")
-            dir_path = st.text_input(
-                "目录路径",
-                help="输入包含PDF文件的本地目录绝对路径，将递归分析所有文件",
-                key="dir_path_input"
-            )
-            paper_input = dir_path
-            paper_url_display = dir_path
-
+            paper_input = st.text_input("arXiv URL", value="https://arxiv.org/abs/2305.12002")
         else:
-            # 文件上传模式
-            uploaded_file = st.file_uploader("上传PDF论文", type=["pdf"], help="上传本地PDF文件进行分析")
-            if uploaded_file:
-                paper_input = uploaded_file
+            upload = st.file_uploader("上传 PDF 文件", type=["pdf"], key="single_pdf_upload")
+            if upload:
+                paper_input = upload
                 is_file_upload = True
-                paper_url_display = uploaded_file.name
-                logger.debug(f"用户上传文件: {uploaded_file.name}")
 
-        # 操作按钮区域
-        st.markdown("<br>", unsafe_allow_html=True)
-        col1, col2 = st.columns([1, 1])
-        with col1:
-            if is_batch_mode:
-                 process_button = st.button("🚀 开始批量分析", use_container_width=True, type="primary")
+        if st.button("开始解析并入库", type="primary", use_container_width=True):
+            if not paper_input:
+                st.warning("请先提供 URL 或上传 PDF。")
             else:
-                 process_button = st.button("🚀 开始分析", use_container_width=True, type="primary")
-        
-        with col2:
-            stop_button = st.button("🛑 停止/清空", use_container_width=True)
+                placeholder = st.empty()
+                full_output = ""
+                with st.spinner("正在解析论文..."):
+                    for result in process_paper(
+                        paper_input,
+                        role=config["role"],
+                        task=config["task"],
+                        domain=config["domain"],
+                        use_chain=config["use_chain"],
+                        is_file_upload=is_file_upload,
+                    ):
+                        if result["type"] == "chunk":
+                            full_output += result["content"]
+                            placeholder.markdown(full_output + "▌")
+                        elif result["type"] == "final":
+                            if result["success"]:
+                                st.session_state.last_analysis_output = full_output
+                                st.success("解析完成，结果已写入论文库。")
+                            else:
+                                st.error(f"解析失败：{result.get('error', '未知错误')}")
+                st.rerun()
 
-        if stop_button:
-            logger.info("用户清空分析结果")
-            st.session_state.messages = []
-            st.session_state.processed_papers = {}
+    with tab2:
+        st.info("💡 请输入本地文件夹的完整路径，例如：/Users/yourname/Documents/Papers 或 C:\\Users\\yourname\\Documents\\Papers")
+
+        # 提供路径输入和常用路径快速选择
+        col1, col2 = st.columns([3, 1])
+
+        with col1:
+            dir_path = st.text_input(
+                "PDF 目录路径",
+                placeholder="例如：/Users/yourname/Documents/Papers",
+                value=st.session_state.get("last_dir_path", ""),
+                key="batch_dir_path"
+            )
+
+        with col2:
+            if st.button("预览目录", use_container_width=True, type="secondary"):
+                if dir_path and Path(dir_path).exists():
+                    pdf_files = list(Path(dir_path).rglob("*.pdf"))
+                    st.success(f"找到 {len(pdf_files)} 个 PDF 文件")
+                    st.session_state.preview_pdf_count = len(pdf_files)
+                else:
+                    st.warning("目录不存在或为空")
+
+        # 显示预览信息
+        if "preview_pdf_count" in st.session_state:
+            st.caption(f"📁 当前目录包含 {st.session_state.preview_pdf_count} 个 PDF 文件")
+
+        if st.button("批量解析目录", use_container_width=True, type="primary"):
+            if not dir_path:
+                st.warning("请先填写目录路径。")
+            else:
+                # 保存最后使用的路径
+                st.session_state.last_dir_path = dir_path
+                pdf_files = [str(f) for f in Path(dir_path).rglob("*.pdf")] if Path(dir_path).exists() else []
+                if not pdf_files:
+                    st.warning("目录中未找到 PDF 文件。")
+                else:
+                    service = PaperAnalysisService(load_config())
+                    progress = st.progress(0.0)
+                    status = st.empty()
+                    for idx, file_path in enumerate(pdf_files, start=1):
+                        status.info(f"正在处理：{Path(file_path).name}")
+                        service.analyze_file(
+                            file_path,
+                            role=config["role"],
+                            task=config["task"],
+                            domain=config["domain"],
+                            use_chain=config["use_chain"],
+                        )
+                        progress.progress(idx / len(pdf_files), text=f"{idx}/{len(pdf_files)}")
+                    st.success(f"批量解析完成，共处理 {len(pdf_files)} 篇。")
+                    st.rerun()
+
+    with tab3:
+        st.info("Zotero 后端同步接口尚未在当前仓库落地。此处先提供统一入口、映射配置和批次记录，便于后续直接接入真实 API。")
+        library_name = st.text_input("Zotero Library / Collection", placeholder="My Library / AI-Papers")
+        export_files = st.file_uploader(
+            "上传 Zotero 导出文件或附件清单",
+            type=["json", "csv", "ris", "bib", "txt", "zip"],
+            accept_multiple_files=True,
+            key="zotero_seed_files",
+        )
+        mapping_mode = st.selectbox("导入映射策略", ["条目 + 附件", "仅条目", "条目 + 标签 + Collections"])
+        if st.button("记录 Zotero 导入批次", use_container_width=True):
+            batch = create_zotero_placeholder_batch(
+                library_name=library_name,
+                mapping_mode=mapping_mode,
+                files=[f.name for f in (export_files or [])],
+                timestamp=time.strftime("%Y-%m-%d %H:%M:%S"),
+            )
+            st.session_state.zotero_batches.insert(0, batch)
+            st.success("已记录导入批次，后续接入 Zotero 服务后可复用该配置。")
+
+
+def render_library_workspace(entries: List[Dict[str, Any]]) -> None:
+    st.header("📚 论文库")
+    st.caption("统一提供筛选、卡片详情、追溯信息、单篇主论文选择和多篇对比选集。")
+
+    if not entries:
+        st.info("论文库为空，请先完成导入解析。")
+        return
+
+    query_col, year_col, task_col = st.columns([0.5, 0.2, 0.3])
+    query = query_col.text_input("搜索标题 / 来源 / 关键词", value=st.session_state.library_query)
+    st.session_state.library_query = query
+    years = [str(item["year"]) for item in entries if str(item["year"]).strip()]
+    selected_year = year_col.selectbox("年份", ["全部"] + sorted(set(years), reverse=True))
+    task_options = ["全部"] + sorted({item["prompt_name"] for item in entries})
+    selected_task = task_col.selectbox("任务", task_options)
+
+    filtered = filter_library_entries(entries, query=query, selected_year=selected_year, selected_task=selected_task)
+
+    st.write(f"筛选后共 {len(filtered)} 篇")
+    for entry in filtered:
+        selected_for_compare = entry["cache_key"] in st.session_state.compare_keys
+        with st.container(border=True):
+            title_col, meta_col = st.columns([0.7, 0.3])
+            with title_col:
+                st.markdown(f"### {entry['title']}")
+                st.caption(f"{entry['year']} · {entry['venue']} · {entry['prompt_name']}")
+                st.write(entry["summary"])
+            with meta_col:
+                compare_checked = st.checkbox(
+                    "加入对比",
+                    value=selected_for_compare,
+                    key=f"compare_toggle_{entry['cache_key']}",
+                )
+                if compare_checked and not selected_for_compare:
+                    st.session_state.compare_keys.append(entry["cache_key"])
+                elif not compare_checked and selected_for_compare:
+                    st.session_state.compare_keys = [k for k in st.session_state.compare_keys if k != entry["cache_key"]]
+
+                if st.button("设为主论文", key=f"active_btn_{entry['cache_key']}", use_container_width=True):
+                    st.session_state.active_paper_key = entry["cache_key"]
+                    st.success("已设为主论文")
+                if st.button("查看分析流", key=f"flow_btn_{entry['cache_key']}", use_container_width=True):
+                    st.session_state.active_paper_key = entry["cache_key"]
+                    goto_workspace("analysis")
+
+            detail_tab1, detail_tab2, detail_tab3 = st.tabs(["卡片详情", "追溯与质量", "结果查看"])
+            with detail_tab1:
+                st.markdown(f"**作者**：{'、'.join(entry.get('authors', [])[:8]) or '未提取'}")
+                if entry.get("method_tags"):
+                    st.markdown("**方法标签**：" + " / ".join(entry["method_tags"]))
+                if entry.get("dataset_tags"):
+                    st.markdown("**数据标签**：" + " / ".join(entry["dataset_tags"]))
+                if entry.get("innovation_points"):
+                    st.markdown("**创新点**")
+                    for item in entry["innovation_points"][:5]:
+                        st.write(f"- {item}")
+                if entry.get("limitations"):
+                    st.markdown("**局限性**")
+                    for item in entry["limitations"][:5]:
+                        st.write(f"- {item}")
+            with detail_tab2:
+                st.write(f"来源：`{entry.get('original_source', 'N/A')}`")
+                st.write(f"缓存键：`{entry['cache_key']}`")
+                st.write(f"分析时间：{time.strftime('%Y-%m-%d %H:%M', time.localtime(entry['timestamp']))}")
+                st.write(f"可靠性评分：{entry.get('reliability', '未生成')}")
+                if entry.get("audit_metrics"):
+                    st.json(entry["audit_metrics"])
+            with detail_tab3:
+                view_mode = st.radio(
+                    "查看格式",
+                    ["Markdown", "Structured JSON"],
+                    key=f"view_mode_{entry['cache_key']}",
+                    horizontal=True,
+                )
+                if view_mode == "Markdown":
+                    st.markdown(entry.get("content") or "暂无 Markdown 结果")
+                else:
+                    st.json(entry.get("structured_data") or {"message": "暂无结构化结果"})
+
+
+def render_single_paper_detail(active_entry: Optional[Dict[str, Any]]) -> None:
+    if not active_entry:
+        st.info("请先从论文库中选择一篇主论文。")
+        return
+    st.subheader(f"当前主论文：{active_entry['title']}")
+    st.caption(f"{active_entry['year']} · {active_entry['venue']} · {active_entry['prompt_name']}")
+    tab1, tab2, tab3 = st.tabs(["分析结果", "结构化卡片", "追问"])
+    with tab1:
+        st.markdown(active_entry.get("content") or "暂无分析结果")
+    with tab2:
+        st.json(active_entry.get("structured_data") or {"message": "暂无结构化结果"})
+    with tab3:
+        for msg in st.session_state.qa_messages:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+        if prompt := st.chat_input("围绕当前主论文继续追问..."):
+            st.session_state.qa_messages.append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.markdown(prompt)
+            with st.chat_message("assistant"):
+                service = PaperAnalysisService(load_config())
+                with st.spinner("正在生成回答..."):
+                    response = service.ask_question(active_entry["cache_key"], prompt)
+                st.markdown(response)
+                st.session_state.qa_messages.append({"role": "assistant", "content": response})
+
+
+def render_compare_panel(compare_entries: List[Dict[str, Any]]) -> None:
+    st.subheader("跨论文对比")
+    panel_state = compare_panel_state(compare_entries)
+    if not panel_state["is_ready"]:
+        st.warning(panel_state["warning"])
+        return
+    st.write("当前对比集合：")
+    for title in panel_state["titles"]:
+        st.write(f"- {title}")
+
+    review_type = st.radio(
+        "输出类型",
+        ["横向对比矩阵", "技术演化梳理", "研究空白发现"],
+        horizontal=True,
+    )
+    if st.button("执行跨论文分析", type="primary"):
+        service = MultiPaperService(load_config())
+        with st.spinner("正在生成综合报告..."):
+            if review_type == "横向对比矩阵":
+                report = service.compare_papers([e["cache_key"] for e in compare_entries])
+            elif review_type == "技术演化梳理":
+                report = service.trace_evolution([e["cache_key"] for e in compare_entries])
+            else:
+                report = service.discover_gaps([e["cache_key"] for e in compare_entries])
+        st.markdown(report)
+        st.download_button("下载报告", report, file_name=f"smartpaper_review_{int(time.time())}.md")
+
+
+def render_research_map_panel(active_entry: Optional[Dict[str, Any]], entries: List[Dict[str, Any]], compare_entries: List[Dict[str, Any]]) -> None:
+    st.subheader("研究映射")
+    scope_entries = research_map_scope(entries, active_entry, compare_entries)
+    if not scope_entries:
+        st.info("暂无可用于映射的论文。")
+        return
+
+    years: Dict[str, int] = {}
+    method_tags: Dict[str, int] = {}
+    dataset_tags: Dict[str, int] = {}
+    app_tags: Dict[str, int] = {}
+    for entry in scope_entries:
+        years[str(entry.get("year", "未知"))] = years.get(str(entry.get("year", "未知")), 0) + 1
+        for tag in entry.get("method_tags", []):
+            method_tags[tag] = method_tags.get(tag, 0) + 1
+        for tag in entry.get("dataset_tags", []):
+            dataset_tags[tag] = dataset_tags.get(tag, 0) + 1
+        for tag in entry.get("application_tags", []):
+            app_tags[tag] = app_tags.get(tag, 0) + 1
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("**时间线分布**")
+        st.json(dict(sorted(years.items())))
+        st.markdown("**方法主题**")
+        st.json(dict(sorted(method_tags.items(), key=lambda x: x[1], reverse=True)[:12]))
+    with col2:
+        st.markdown("**数据主题**")
+        st.json(dict(sorted(dataset_tags.items(), key=lambda x: x[1], reverse=True)[:12]))
+        st.markdown("**应用主题**")
+        st.json(dict(sorted(app_tags.items(), key=lambda x: x[1], reverse=True)[:12]))
+
+    if active_entry:
+        st.markdown("---")
+        st.markdown("**主论文与科研画像的相关性评估**")
+        if st.button("生成主论文相关性报告", use_container_width=True):
+            service = PaperAnalysisService(load_config())
+            with st.spinner("正在评估相关性..."):
+                result = service.calculate_relevance(active_entry["cache_key"])
+            if "error" in result:
+                st.error(result["error"])
+                if result.get("raw_content"):
+                    st.code(result["raw_content"])
+            else:
+                score_col, desc_col = st.columns([0.25, 0.75])
+                score_col.metric("相关度", f"{result.get('relevance_score', 0)}%")
+                with desc_col:
+                    st.markdown("**匹配点**")
+                    for item in result.get("matching_points", []):
+                        st.write(f"- {item}")
+                    st.markdown("**差异/空白**")
+                    for item in result.get("gap_points", []):
+                        st.write(f"- {item}")
+                    st.markdown("**应用建议**")
+                    st.write(result.get("usage_suggestion", "暂无建议"))
+
+
+def render_analysis_workspace(entries: List[Dict[str, Any]]) -> None:
+    st.header("🧠 分析工作流")
+    st.caption("围绕\"主论文 + 对比集合\"组织单篇查看、跨论文对比、研究映射与追问。")
+
+    # 添加论文选择区域
+    if entries:
+        st.markdown("---")
+        st.subheader("📋 快速选择论文")
+
+        # 主论文选择
+        entry_options = {f"{e['title']} ({e['year']})": e["cache_key"] for e in entries}
+        active_key = st.session_state.get("active_paper_key")
+        if active_key not in entry_options.values():
+            active_key = None
+
+        selected_title = st.selectbox(
+            "选择主论文",
+            options=list(entry_options.keys()),
+            index=list(entry_options.values()).index(active_key) if active_key else 0,
+            key="main_paper_selector"
+        )
+
+        if selected_title:
+            selected_key = entry_options[selected_title]
+            if selected_key != st.session_state.active_paper_key:
+                st.session_state.active_paper_key = selected_key
+                st.rerun()
+
+        # 对比论文多选
+        compare_titles = st.multiselect(
+            "选择对比论文（可多选）",
+            options=list(entry_options.keys()),
+            default=[k for k, v in entry_options.items() if v in st.session_state.compare_keys],
+            key="compare_papers_selector"
+        )
+
+        # 更新对比集合
+        new_compare_keys = [entry_options[title] for title in compare_titles]
+        if new_compare_keys != st.session_state.compare_keys:
+            st.session_state.compare_keys = new_compare_keys
             st.rerun()
 
         st.markdown("---")
-        
-        # 显示聊天历史（分析结果）
-        st.write("### 分析结果")
-        chat_container = st.container()
+    else:
+        st.info("📚 论文库暂无论文，请先前往\"导入与解析\"添加论文。")
 
-        # 仅在非正在处理状态下渲染此处的历史记录，避免与下方处理逻辑中的渲染冲突导致 duplicate key
-        if not process_button:
-            with chat_container:
-                for i, message in enumerate(st.session_state.messages):
-                    with st.chat_message(message["role"]):
-                        st.markdown(message["content"])
-                        # 为已处理的论文显示下载按钮
-                        if "file_name" in message:
-                            st.download_button(
-                                label=f"下载 {message['file_name']}",
-                                data=message["content"],
-                                file_name=message["file_name"],
-                                mime="text/markdown",
-                                key=f"download_{message['file_name']}_{i}_{uuid.uuid4().hex[:8]}",
-                            )
-                        # 添加重新分析功能
-                        if "url" in message and not is_batch_mode:
-                            with st.expander("重新分析"):
-                                prompt_options = list_prompts()
-                                selected_prompt_reanalyze = st.selectbox(
-                                    "选择提示词模板",
-                                    options=list(prompt_options.keys()),
-                                    format_func=lambda x: f"{x}: {prompt_options[x]}",
-                                    key=f"reanalyze_prompt_{i}",
-                                )
-                                if st.button("重新分析", key=f"reanalyze_button_{i}"):
-                                    logger.info(
-                                        f"用户请求重新分析，使用提示词模板: {selected_prompt_reanalyze}"
-                                    )
-                                    reanalyze_paper(message["url"], selected_prompt_reanalyze)
-
-    # 创建当前分析进展区域
-    progress_container = st.container()
-
-    if is_batch_mode and process_button:
-        if not paper_input or not os.path.exists(paper_input):
-            st.error("请输入有效的目录路径")
-            return
-            
-        # 清空之前的消息
-        st.session_state.messages = []
-        st.session_state.messages.append({"role": "user", "content": f"开始批量分析目录: {paper_input}"})
-        
-        from pathlib import Path
-        from core.smart_paper_core import SmartPaper # Import SmartPaper for batch processing
-        dir_path = Path(paper_input)
-        pdf_files = list(dir_path.rglob("*.pdf"))
-        total_files = len(pdf_files)
-        
-        if total_files == 0:
-            st.warning("目录中未找到PDF文件")
-            return
-            
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        results_summary = []
-        
-        try:
-             # 初始化Reader
-            logger.debug("初始化SmartPaper用于批量处理")
-            reader = SmartPaper(output_format="markdown")
-            
-            # 获取历史记录用于跳过重复
-            from core.history_manager import HistoryManager
-            hm = HistoryManager()
-            history = hm.list_history()
-            
-            # 构建已处理的文件名集合（从原始路径提取文件名）
-            processed_filenames = set()
-            for entry in history:
-                original_source = entry.get("original_source", "")
-                if original_source:
-                    # 尝试从路径或URL中提取文件名
-                    name = os.path.basename(original_source)
-                    if name:
-                        processed_filenames.add(name)
-            
-            for idx, file_path in enumerate(pdf_files):
-                status_text.text(f"正在处理 [{idx+1}/{total_files}]: {file_path.name}")
-                
-                # Check 1: Empty file
-                if os.path.getsize(file_path) == 0:
-                    logger.warning(f"跳过空文件: {file_path.name}")
-                    results_summary.append(f"⚠️ {file_path.name}: 文件为空，已跳过")
-                    progress_bar.progress((idx + 1) / total_files)
-                    continue
-
-                # Check 2: Skip existing (by filename)
-                # 直接检查当前文件名是否在历史记录的文件名集合中
-                if file_path.name in processed_filenames:
-                    logger.info(f"文件已存在于历史记录中，跳过: {file_path.name}")
-                    results_summary.append(f"🔄 {file_path.name}: 已存在 (历史记录)")
-                    progress_bar.progress((idx + 1) / total_files)
-                    continue
-
-                try:
-                    # 使用 st.expander 显示当前正在处理的论文流式输出
-                    with st.expander(f"正在分析: {file_path.name}", expanded=True):
-                        stream_placeholder = st.empty()
-                        full_content = ""
-                        
-                        # 调用 process_paper_stream
-                        # 注意：我们需要确保 process_paper_stream 能够接受本地路径
-                        # 查看 smart_paper_core.py, process_paper_stream(file_path, prompt_name) 是存在的
-                        
-                        # 为了复用保存逻辑，我们需要手动处理流并保存，或者调用 process_paper (非流式)
-                        # 但用户想要看流式过程。
-                        # SmartPaper.process_paper_stream 只负责 yield 结果，不负责保存到文件(?)
-                        # 让我们检查 SmartPaper.process_paper 源码 (Line 80-110 of smart_paper_core.py)
-                        # 它是先 process_with_content 获取完整结果，然后再 save_analysis。
-                        # process_paper_stream 只是 yield。
-                        
-                        # 所以我们需要模拟 process_paper 的逻辑但支持流式显示。
-                        # 1. 转换PDF
-                        # 2. 调用 LLMWrapper.process_stream_with_content
-                        # 3. 收集结果
-                        # 4. 保存
-                        
-                        # 简化方案：直接使用 reader.process_paper_stream 获取流，并累积
-                        # 然后手动调用 history_manager.save_analysis
-                        
-                        # 步骤1: 转换 (Reader内部 helper?)
-                        # 实际上 reader.process_paper_stream 内部已经做了转换和流式调用。
-                        # 让我们看看 process_paper_stream 的实现 (没显示在之前的 view_file 中但它是存在的)
-                        # 假设 process_paper_stream 返回 generator yielding chunk string
-                        
-                        stream_gen = reader.process_paper_stream(str(file_path), prompt_name=selected_prompt)
-                        
-                        for chunk in stream_gen:
-                            full_content += chunk
-                            stream_placeholder.markdown(full_content + "▌")
-                        
-                        stream_placeholder.markdown(full_content)
-                        
-                        # 步骤2: 保存结果
-                        # 需要 metadata (转换结果中的 metadata)
-                        # process_paper_stream 可能无法返回 metadata? 
-                        # 如果 process_paper_stream 只 yield contents relevant to prompt, we might miss metadata.
-                        
-                        # 备选方案：由于 SmartPaper API 的限制，如果 process_paper_stream 不返回 metadata，
-                        # 我们可能为了流式展示而牺牲 metadata 或者需要修改 core。
-                        # 但通常 prompt analysis 不需要复杂的 metadata 除非用于引用。
-                        
-                        # 让我们尝试构造一个基本的 metadata
-                        metadata = {"source": str(file_path), "file_name": file_path.name}
-                        
-                        # 手动保存
-                        # 计算 hash 用于去重/ID
-                        import hashlib
-                        with open(file_path, "rb") as f:
-                            file_hash = hashlib.md5(f.read()).hexdigest()
-                            
-                        reader.history_manager.save_analysis(
-                            source=str(file_path),
-                            source_hash=file_hash,
-                            prompt_name=selected_prompt,
-                            content=full_content,
-                            metadata=metadata
-                        )
-                        
-                    results_summary.append(f"✅ {file_path.name}")
-                    
-                except Exception as e:
-                    logger.error(f"处理 {file_path.name} 失败: {e}")
-                    results_summary.append(f"❌ {file_path.name}: {str(e)}")
-                
-                # 更新进度条
-                progress_bar.progress((idx + 1) / total_files)
-            
-            status_text.text("批量分析完成！")
-            
-            # 显示汇总结果
-            summary_text = "### 批量分析报告\n\n" + "\n".join(results_summary)
-            st.session_state.messages.append({"role": "论文分析助手", "content": summary_text})
-            st.rerun()
-            
-        except Exception as e:
-             st.error(f"批量处理发生错误: {str(e)}")
+    active_entry = get_entry_by_key(st.session_state.active_paper_key, entries)
+    compare_entries = [entry for entry in entries if entry["cache_key"] in st.session_state.compare_keys]
+    tab1, tab2, tab3 = st.tabs(["单篇工作台", "跨论文对比", "研究映射"])
+    with tab1:
+        render_single_paper_detail(active_entry)
+    with tab2:
+        render_compare_panel(compare_entries)
+    with tab3:
+        render_research_map_panel(active_entry, entries, compare_entries)
 
 
-    # 处理新论文并流式输出
-    elif process_button and not is_batch_mode:
-        logger.info(f"用户点击开始分析按钮，目标: {paper_url_display}, 提示词模板: {selected_prompt}")
+def render_zotero_workspace() -> None:
+    st.header("🗂️ Zotero 集成")
+    st.caption("当前先提供统一入口、导入映射配置和批次追踪；待后端接口接入后，这里将直接切换为真实同步视图。")
 
-        if not paper_input:
-            st.error("请提供有效的论文URL或上传PDF文件")
-            return
+    left, right = st.columns([0.45, 0.55])
+    with left:
+        st.subheader("连接与映射配置")
+        st.text_input("Zotero API Key", value="", type="password", placeholder="后端接入后使用")
+        st.text_input("User / Group ID", placeholder="例如 userId 或 groupId")
+        st.selectbox("库类型", ["个人库", "团队库"])
+        st.multiselect("同步内容", ["条目", "附件", "标签", "Collections"], default=["条目", "附件", "标签"])
+        st.checkbox("导入后自动进入论文库", value=True)
+        st.checkbox("保留 Zotero collection 路径", value=True)
+        st.info("当前仓库尚未提供 Zotero 基础设施实现，因此此页不会发起真实同步请求。")
 
-        # 先验证URL格式 (仅针对URL模式)
-        if not is_file_upload:
-            try:
-                validated_url = validate_and_format_arxiv_url(paper_input)
-            except ValueError as exc:
-                error_stack = traceback.format_exc()
-                logger.error(f"用户输入无效 arXiv URL\n{error_stack}")
-                st.error(str(exc))
-                st.session_state.messages.append(
-                    {
-                        "role": "论文分析助手",
-                        "content": f"错误: {exc}\n\n详细错误信息:\n{error_stack}",
-                        "url": paper_input,
-                    }
-                )
-                st.rerun()
-                return
-        
-        # 检查是否已处理 (使用显示名称作为key)
-        # 注意：这里简化处理，对于文件上传可能需要更好的去重机制（如文件hash）
-        paper_key = paper_url_display 
-        
-        if paper_key in st.session_state.processed_papers:
-            logger.warning(f"论文已分析过: {paper_key}")
-            st.warning('该论文已经分析过，如果不满意，可以点击对应分析结果的"重新分析"按钮。')
+    with right:
+        st.subheader("已记录批次")
+        if not st.session_state.zotero_batches:
+            st.info("暂无 Zotero 导入批次，请在“导入与解析”页面记录。")
         else:
-            # 清空之前的消息
-            st.session_state.messages = []
-            # 添加用户消息到聊天历史
-            st.session_state.messages.append(
-                {"role": "user", "content": f"请分析论文: {paper_key}"}
-            )
+            for idx, batch in enumerate(st.session_state.zotero_batches, start=1):
+                with st.container(border=True):
+                    st.markdown(f"**批次 {idx} · {batch['library']}**")
+                    st.caption(f"{batch['timestamp']} · {batch['mapping_mode']} · {batch['status']}")
+                    if batch.get("files"):
+                        st.write("文件：" + ", ".join(batch["files"]))
 
-            # 在进度容器中创建进度显示区域
-            with progress_container:
-                st.write("### 当前分析进展\n")
-                progress_placeholder = st.empty()
 
-            with st.spinner("正在处理论文..."):
-                logger.info(f"开始分析论文: {paper_key}")
-                
-                # --- Persistence Change Start ---
-                # 1. Initialize empty assistant message
-                init_msg = {
-                    "role": "论文分析助手",
-                    "content": "⏳ 正在准备分析...",
-                    "url": paper_key
-                }
-                st.session_state.messages.append(init_msg)
-                msg_index = len(st.session_state.messages) - 1
-                
-                full_output = ""
-                for result in process_paper(paper_input, selected_prompt, is_file_upload=is_file_upload):
-                    if result["type"] == "chunk":
-                        full_output += result["content"]
-                        # 2. Real-time update to session state
-                        st.session_state.messages[msg_index]["content"] = full_output
-                        # Real-time update to placeholder (optional but good for animation)
-                        progress_placeholder.markdown(full_output + "▌")
-                        
-                    elif result["type"] == "final":
-                        if result["success"]:
-                            logger.info("论文分析成功")
-                            response = full_output
-                            file_path = result["file_path"]
-                            file_name = os.path.basename(file_path)
-                            
-                            st.session_state.processed_papers[paper_key] = {
-                                "content": response,
-                                "file_path": file_path,
-                                "file_name": file_name,
-                            }
-                            
-                            # 3. Final update to message metadata
-                            st.session_state.messages[msg_index]["content"] = response
-                            st.session_state.messages[msg_index]["file_name"] = file_name
-                            st.session_state.messages[msg_index]["file_path"] = file_path
-                            # url is already set
-                        else:
-                            logger.error(f"论文分析失败: {result['error']}")
-                            response = result["error"]
-                            # Final update for error
-                            st.session_state.messages[msg_index]["content"] = f"❌ 分析出错: {response}"
-                        break
-                # --- Persistence Change End ---
+def main() -> None:
+    st.set_page_config(page_title="SmartPaper Workbench", layout="wide")
 
-            # 分析完成后清空进度显示
-            progress_placeholder.empty()
+    # ============================================
+    # 完整的现代化 CSS 样式系统
+    # ============================================
+    st.markdown(
+        """
+        <style>
+        /* ==================== CSS 变量定义 ==================== */
+        :root {
+            /* 主色调 - 专业学术蓝 */
+            --primary-color: #1e40af;
+            --primary-hover: #1e3a8a;
+            --primary-light: #dbeafe;
+            --primary-dark: #1e3a8a;
 
-            # 更新聊天历史显示
-            with chat_container:
-                for i, message in enumerate(st.session_state.messages):
-                    with st.chat_message(message["role"]):
-                        st.markdown(message["content"])
-                        if "file_name" in message:
-                            st.download_button(
-                                label=f"下载 {message['file_name']}",
-                                data=message["content"],
-                                file_name=message["file_name"],
-                                mime="text/markdown",
-                                key=f"download_{message['file_name']}_{i}_{uuid.uuid4().hex[:8]}",
-                            )
-                        if "url" in message:
-                            with st.expander("重新分析"):
-                                prompt_options = list_prompts()
-                                selected_prompt_reanalyze = st.selectbox(
-                                    "选择提示词模板",
-                                    options=list(prompt_options.keys()),
-                                    format_func=lambda x: f"{x}: {prompt_options[x]}",
-                                    key=f"reanalyze_prompt_{i}",
-                                )
-                                if st.button("重新分析", key=f"reanalyze_button_{i}"):
-                                    logger.info(
-                                        f"用户请求重新分析，使用提示词模板: {selected_prompt_reanalyze}"
-                                    )
-                                    reanalyze_paper(message["url"], selected_prompt_reanalyze)
+            /* 辅助色系 */
+            --secondary-color: #0891b2;
+            --secondary-light: #cffafe;
+            --accent-color: #7c3aed;
+            --accent-light: #ede9fe;
+
+            /* 语义颜色 */
+            --success-color: #059669;
+            --success-light: #d1fae5;
+            --warning-color: #d97706;
+            --warning-light: #fef3c7;
+            --error-color: #dc2626;
+            --error-light: #fee2e2;
+            --info-color: #0891b2;
+            --info-light: #ecfeff;
+
+            /* 背景色 */
+            --bg-primary: #ffffff;
+            --bg-secondary: #f8fafc;
+            --bg-tertiary: #f1f5f9;
+            --bg-card: #ffffff;
+            --bg-hover: #f0f9ff;
+
+            /* 文字颜色 */
+            --text-primary: #1e293b;
+            --text-secondary: #475569;
+            --text-tertiary: #64748b;
+            --text-light: #94a3b8;
+
+            /* 边框颜色 */
+            --border-color: #e2e8f0;
+            --border-hover: #cbd5e1;
+            --border-focus: #3b82f6;
+
+            /* 阴影 */
+            --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+
+            /* 圆角 */
+            --radius-sm: 4px;
+            --radius-md: 8px;
+            --radius-lg: 12px;
+            --radius-xl: 16px;
+            --radius-2xl: 24px;
+
+            /* 间距 */
+            --spacing-xs: 4px;
+            --spacing-sm: 8px;
+            --spacing-md: 16px;
+            --spacing-lg: 24px;
+            --spacing-xl: 32px;
+            --spacing-2xl: 48px;
+        }
+
+        /* ==================== 全局样式 ==================== */
+        /* 使用更具体的选择器来减少 !important */
+        [data-testid="stAppViewBlockContainer"] > div > div > div > div > div.block-container {
+            padding-top: 2rem;
+            padding-bottom: 3rem;
+            max-width: 1400px;
+        }
+
+        .main .block-container {
+            background: linear-gradient(135deg, var(--bg-secondary) 0%, #f1f8ff 100%);
+            border-radius: 0;
+        }
+
+        /* 滚动条美化 */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: var(--bg-tertiary);
+            border-radius: var(--radius-md);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: var(--text-light);
+            border-radius: var(--radius-md);
+            transition: background 0.3s ease;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-tertiary);
+        }
+
+        /* ==================== 标题排版 ==================== */
+        /* 使用更具体的选择器，减少 !important */
+        .main h1,
+        [data-testid="stHeader"] h1 {
+            color: var(--primary-dark);
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: var(--spacing-lg);
+            letter-spacing: -0.025em;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+        }
+
+        .main h2 {
+            color: var(--primary-color);
+            font-size: 1.875rem;
+            font-weight: 600;
+            margin-top: var(--spacing-xl);
+            margin-bottom: var(--spacing-md);
+            border-bottom: 2px solid var(--primary-light);
+            padding-bottom: var(--spacing-sm);
+        }
+
+        .main h3 {
+            color: var(--primary-hover);
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-top: var(--spacing-lg);
+            margin-bottom: var(--spacing-sm);
+        }
+
+        .main h4 {
+            color: var(--text-primary);
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-top: var(--spacing-md);
+            margin-bottom: var(--spacing-xs);
+        }
+
+        /* ==================== 文字样式 ==================== */
+        .main p,
+        .main li,
+        .main td,
+        .main th {
+            color: var(--text-secondary);
+            font-size: 1rem;
+            line-height: 1.7;
+        }
+
+        /* ==================== 侧边栏样式 ==================== */
+        /* 使用更具体的层级选择器 */
+        section[data-testid="stSidebar"] > div:nth-child(1) {
+            background: linear-gradient(180deg, var(--primary-dark) 0%, var(--primary-color) 100%);
+            box-shadow: var(--shadow-lg);
+            color: white;
+        }
+
+        section[data-testid="stSidebar"] > div:nth-child(1) > div {
+            background: transparent;
+        }
+
+        /* 侧边栏标题 */
+        section[data-testid="stSidebar"] h1,
+        section[data-testid="stSidebar"] h2,
+        section[data-testid="stSidebar"] h3 {
+            color: white;
+            font-weight: 600;
+        }
+
+        /* 侧边导航按钮 */
+        section[data-testid="stSidebar"] button[kind="primary"],
+        section[data-testid="stSidebar"] button[kind="secondary"] {
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: var(--radius-md);
+            padding: var(--spacing-sm) var(--spacing-md);
+            margin-bottom: var(--spacing-xs);
+            transition: all 0.3s ease;
+            text-align: left;
+            font-weight: 500;
+        }
+
+        section[data-testid="stSidebar"] button[kind="primary"]:hover,
+        section[data-testid="stSidebar"] button[kind="secondary"]:hover {
+            background: rgba(255, 255, 255, 0.2);
+            transform: translateX(4px);
+            box-shadow: var(--shadow-md);
+        }
+
+        /* 侧边栏输入框 */
+        section[data-testid="stSidebar"] input,
+        section[data-testid="stSidebar"] textarea,
+        section[data-testid="stSidebar"] select {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: var(--radius-md);
+            color: #1e293b !important;
+        }
+
+        /* 输入框内的占位符文字 */
+        section[data-testid="stSidebar"] input::placeholder,
+        section[data-testid="stSidebar"] textarea::placeholder {
+            color: #94a3b8 !important;
+        }
+
+        /* Selectbox 下拉选项文字 - 使用更高优先级的选择器 */
+        section[data-testid="stSidebar"] [data-baseweb="select"] [role="listbox"],
+        section[data-testid="stSidebar"] [data-baseweb="select"] [role="option"] {
+            color: #1e293b !important;
+            background-color: #ffffff !important;
+        }
+
+        /* 侧边栏标签和说明文字 - 确保对比度 */
+        section[data-testid="stSidebar"] label,
+        section[data-testid="stSidebar"] p,
+        section[data-testid="stSidebar"] caption {
+            color: #ffffff !important;
+        }
+
+        /* 侧边栏通用文字 - 排除输入框和下拉选项内的文字 */
+        section[data-testid="stSidebar"] > div > div > div > div > div > span:not(input + span):not(.stSelectbox span):not(.stMultiSelect span):not(.stFileUploader span) {
+            color: #ffffff !important;
+        }
+
+        /* 侧边栏通用 div - 排除输入框和下拉选项容器 */
+        section[data-testid="stSidebar"] > div > div > div > div > div:not(:has(input)):not(:has(select)):not(:has(textarea)) {
+            color: #ffffff !important;
+        }
+
+        /* 确保输入框容器内的 div 文字不会被覆盖 */
+        section[data-testid="stSidebar"] input + div,
+        section[data-testid="stSidebar"] select + div,
+        section[data-testid="stSidebar"] textarea + div {
+            color: #1e293b !important;
+        }
+
+        /* 侧边栏链接文字 */
+        section[data-testid="stSidebar"] a {
+            color: #e0e7ff !important;
+        }
+
+        /* 侧边栏 checkbox 标签 */
+        section[data-testid="stSidebar"] .stCheckbox label {
+            color: #ffffff !important;
+        }
+
+        /* 侧边栏 radio/selectbox 标签 */
+        section[data-testid="stSidebar"] .stRadio label,
+        section[data-testid="stSidebar"] .stSelectbox label {
+            color: #ffffff !important;
+        }
+
+        /* 侧边栏 radio 选项文字 */
+        section[data-testid="stSidebar"] .stRadio [role="radiogroup"] label {
+            color: #f5f5f5 !important;
+        }
+
+        /* 侧边栏 caption 文字 */
+        section[data-testid="stSidebar"] caption {
+            color: #e0e0e0 !important;
+        }
+
+        /* 侧边栏 progress 文字 */
+        section[data-testid="stSidebar"] .stProgress label {
+            color: #ffffff !important;
+        }
+
+        /* 侧边栏 expander 标题 */
+        section[data-testid="stSidebar"] .streamlit-expanderHeader {
+            color: #ffffff !important;
+        }
+
+        /* 侧边栏 expander 内容 */
+        section[data-testid="stSidebar"] .streamlit-expanderContent {
+            color: #f5f5f5 !important;
+        }
+
+        /* 侧边栏 subheader */
+        section[data-testid="stSidebar"] h3,
+        section[data-testid="stSidebar"] h4,
+        section[data-testid="stSidebar"] h5 {
+            color: #ffffff !important;
+        }
+
+        /* ==================== 按钮样式 ==================== */
+        /* 主按钮 - 使用更具体的选择器减少 !important */
+        button[kind="primary"] {
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-hover) 100%);
+            color: white;
+            border: none;
+            border-radius: var(--radius-md);
+            padding: var(--spacing-sm) var(--spacing-lg);
+            font-weight: 600;
+            box-shadow: var(--shadow-md);
+            transition: all 0.3s ease;
+            letter-spacing: 0.025em;
+        }
+
+        button[kind="primary"]:hover {
+            background: linear-gradient(135deg, var(--primary-hover) 0%, var(--primary-dark) 100%);
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-lg);
+        }
+
+        button[kind="primary"]:active {
+            transform: translateY(0);
+        }
+
+        /* 次要按钮 */
+        button[kind="secondary"] {
+            background: var(--bg-card);
+            color: var(--primary-color);
+            border: 2px solid var(--primary-color);
+            border-radius: var(--radius-md);
+            padding: var(--spacing-sm) var(--spacing-lg);
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        button[kind="secondary"]:hover {
+            background: var(--primary-light);
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+
+        /* ==================== 卡片容器样式 ==================== */
+        /* 带边框的容器 - 优化选择器减少 !important */
+        div[data-testid="stVerticalBlockBorderWrapper"] {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-md);
+            margin: var(--spacing-md) 0;
+            overflow: hidden;
+            transition: all 0.3s ease;
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"]:hover {
+            border-color: var(--border-hover);
+            box-shadow: var(--shadow-lg);
+        }
+
+        /* 容器内的标题 */
+        div[data-testid="stVerticalBlockBorderWrapper"] > div > div > h2,
+        div[data-testid="stVerticalBlockBorderWrapper"] > div > div > h3 {
+            background: var(--bg-tertiary);
+            padding: var(--spacing-md) var(--spacing-lg);
+            margin: 0;
+            border-bottom: 1px solid var(--border-color);
+            color: var(--primary-color);
+        }
+
+        /* Expander 美化 */
+        .streamlit-expanderHeader {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            padding: var(--spacing-md) var(--spacing-lg);
+            font-weight: 600;
+            color: var(--text-primary);
+            transition: all 0.3s ease;
+        }
+
+        .streamlit-expanderHeader:hover {
+            background: var(--bg-hover);
+            border-color: var(--border-focus);
+        }
+
+        .streamlit-expanderContent {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-top: none;
+            border-radius: 0 0 var(--radius-md) var(--radius-md);
+            padding: var(--spacing-lg);
+        }
+
+        /* ==================== 进度条样式 ==================== */
+        [data-testid="stProgress"] > div > div > div {
+            background: linear-gradient(90deg, var(--primary-color), var(--secondary-color), var(--accent-color));
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-md);
+            transition: width 0.5s ease;
+        }
+
+        [data-testid="stProgress"] > div > div {
+            background: var(--bg-tertiary);
+            border-radius: var(--radius-lg);
+            overflow: hidden;
+        }
+
+        /* ==================== 文件上传区域 ==================== */
+        [data-testid="stFileUploader"] {
+            border: 2px dashed var(--border-color);
+            border-radius: var(--radius-xl);
+            padding: var(--spacing-2xl);
+            background: var(--bg-secondary);
+            transition: all 0.3s ease;
+        }
+
+        [data-testid="stFileUploader"]:hover {
+            border-color: var(--primary-color);
+            background: var(--primary-light);
+        }
+
+        [data-testid="stFileUploader"] p {
+            color: var(--text-tertiary);
+        }
+
+        /* ==================== 输入框样式 ==================== */
+        input[type="text"],
+        input[type="url"],
+        input[type="number"],
+        textarea,
+        select {
+            background: var(--bg-card);
+            border: 2px solid var(--border-color);
+            border-radius: var(--radius-md);
+            padding: var(--spacing-sm) var(--spacing-md);
+            color: var(--text-primary);
+            font-size: 1rem;
+            transition: all 0.3s ease;
+        }
+
+        input[type="text"]:focus,
+        input[type="url"]:focus,
+        input[type="number"]:focus,
+        textarea:focus,
+        select:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px var(--primary-light);
+            outline: none;
+        }
+
+        /* ==================== Metric 卡片样式 ==================== */
+        /* 问题 2 修复：为 Metric 组件添加特定样式选择器 */
+        [data-testid="stMetric"] > div > div > div > div > div:nth-child(1) {
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            font-size: 2.5rem;
+            font-weight: 700;
+        }
+
+        [data-testid="stMetric"] > div > div > div > div > div:nth-child(2) {
+            color: var(--text-tertiary);
+            font-weight: 600;
+            font-size: 1rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        /* ==================== 数据表格样式 ==================== */
+        table.dataframe {
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            overflow: hidden;
+            box-shadow: var(--shadow-sm);
+        }
+
+        table.dataframe th {
+            background: var(--primary-dark);
+            color: white;
+            font-weight: 600;
+            padding: var(--spacing-md) var(--spacing-lg);
+            text-align: left;
+        }
+
+        table.dataframe td {
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--border-color);
+            padding: var(--spacing-md) var(--spacing-lg);
+            transition: background 0.2s ease;
+        }
+
+        table.dataframe tr:hover td {
+            background: var(--bg-hover);
+        }
+
+        /* ==================== 复选框和单选框 ==================== */
+        [data-testid="stCheckbox"] label,
+        [data-testid="stRadio"] label {
+            color: var(--text-secondary);
+            font-weight: 500;
+            padding: var(--spacing-xs) var(--spacing-sm);
+            transition: color 0.2s ease;
+        }
+
+        [data-testid="stCheckbox"] label:hover,
+        [data-testid="stRadio"] label:hover {
+            color: var(--primary-color);
+        }
+
+        /* ==================== 代码块样式 ==================== */
+        pre {
+            background: #1e293b;
+            color: #e2e8f0;
+            border-radius: var(--radius-md);
+            padding: var(--spacing-lg);
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 0.9rem;
+            line-height: 1.6;
+            border: 1px solid var(--border-color);
+            box-shadow: var(--shadow-md);
+        }
+
+        code {
+            background: var(--bg-tertiary);
+            color: var(--primary-color);
+            padding: 2px 6px;
+            border-radius: var(--radius-sm);
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 0.9em;
+        }
+
+        /* ==================== 状态标签样式（用于 st.info / st.success 等） ==================== */
+        /* Streamlit 原生消息框样式增强 */
+        [data-testid="stInfo"] {
+            background: var(--info-light);
+            border-left: 4px solid var(--info-color);
+            border-radius: var(--radius-md);
+            padding: var(--spacing-md) var(--spacing-lg);
+        }
+        [data-testid="stInfo"] p {
+            color: var(--info-color);
+            font-weight: 500;
+        }
+
+        [data-testid="stSuccess"] {
+            background: var(--success-light);
+            border-left: 4px solid var(--success-color);
+            border-radius: var(--radius-md);
+            padding: var(--spacing-md) var(--spacing-lg);
+        }
+        [data-testid="stSuccess"] p {
+            color: var(--success-color);
+            font-weight: 500;
+        }
+
+        [data-testid="stWarning"] {
+            background: var(--warning-light);
+            border-left: 4px solid var(--warning-color);
+            border-radius: var(--radius-md);
+            padding: var(--spacing-md) var(--spacing-lg);
+        }
+        [data-testid="stWarning"] p {
+            color: var(--warning-color);
+            font-weight: 500;
+        }
+
+        [data-testid="stError"] {
+            background: var(--error-light);
+            border-left: 4px solid var(--error-color);
+            border-radius: var(--radius-md);
+            padding: var(--spacing-md) var(--spacing-lg);
+        }
+        [data-testid="stError"] p {
+            color: var(--error-color);
+            font-weight: 500;
+        }
+
+        /* ==================== 加载动画 ==================== */
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        /* ==================== 分割线样式 ==================== */
+        hr {
+            border: none;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--border-color), transparent);
+            margin: var(--spacing-xl) 0;
+        }
+
+        /* ==================== Tab 样式 ==================== */
+        /* Tab 组件需要使用 !important 因为 Streamlit 内联样式特异性很高 */
+        [data-testid="stTabs"] > [role="tablist"] {
+            background: var(--bg-tertiary) !important;
+            border-radius: var(--radius-md) !important;
+            padding: var(--spacing-xs) !important;
+            gap: var(--spacing-xs) !important;
+        }
+
+        [data-testid="stTabs"] [role="tab"] {
+            background: transparent !important;
+            border: none !important;
+            color: var(--text-secondary) !important;
+            font-weight: 600 !important;
+            padding: var(--spacing-sm) var(--spacing-lg) !important;
+            border-radius: var(--radius-sm) !important;
+            transition: all 0.3s ease !important;
+        }
+
+        [data-testid="stTabs"] [role="tab"][aria-selected="true"] {
+            background: var(--bg-card) !important;
+            color: var(--primary-color) !important;
+            box-shadow: var(--shadow-sm);
+        }
+
+        [data-testid="stTabs"] [role="tab"]:hover {
+            background: var(--primary-light) !important;
+        }
+
+        [data-testid="stTabs"] [data-testid="stTabContent"] {
+            background: var(--bg-card) !important;
+            border: 1px solid var(--border-color) !important;
+            border-top: none !important;
+            border-radius: 0 0 var(--radius-md) var(--radius-md) !important;
+            padding: var(--spacing-xl) !important;
+        }
+
+        /* ==================== 响应式设计 ==================== */
+        @media (max-width: 768px) {
+            .main h1 { font-size: 2rem; }
+            .main h2 { font-size: 1.5rem; }
+            .main h3 { font-size: 1.25rem; }
+
+            [data-testid="stAppViewBlockContainer"] > div > div > div > div > div.block-container {
+                padding-top: 1rem;
+                padding-bottom: 2rem;
+            }
+        }
+
+        /* ==================== 特殊效果 ==================== */
+        .glow-effect {
+            box-shadow: 0 0 20px rgba(30, 64, 175, 0.3);
+        }
+
+        .fade-in {
+            animation: fadeIn 0.5s ease-in;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* ==================== 修复侧边栏 selectbox 选项文字 ==================== */
+        /* 确保侧边栏 selectbox 的下拉选项文字是深色 */
+        section[data-testid="stSidebar"] [role="listbox"] div,
+        section[data-testid="stSidebar"] [role="listbox"] span,
+        section[data-testid="stSidebar"] [role="option"] div,
+        section[data-testid="stSidebar"] [role="option"] span {
+            color: #1e293b !important;
+            background: white !important;
+        }
+
+        /* 确保侧边栏 selectbox 展开后的容器背景 */
+        section[data-testid="stSidebar"] [role="listbox"] {
+            background: white !important;
+        }
+
+        /* 确保侧边栏所有输入组件内的文字都是深色 */
+        section[data-testid="stSidebar"] input,
+        section[data-testid="stSidebar"] textarea,
+        section[data-testid="stSidebar"] select {
+            color: #1e293b !important;
+        }
+
+        /* 确保侧边栏 selectbox 选中项的文字 */
+        section[data-testid="stSidebar"] [aria-selected="true"],
+        section[data-testid="stSidebar"] [data-selected="true"] {
+            color: #1e293b !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.title("赋睿科研工作台 🚀")
+    init_session_state()
+    options = get_available_options()
+    workbench_service = WorkbenchService()
+    entries = workbench_service.list_library_entries()
+    config = render_sidebar(options, entries, workbench_service)
+
+    workspace = st.session_state.workspace
+    if workspace == "overview":
+        render_overview(entries)
+    elif workspace == "intake":
+        render_import_workspace(config)
+    elif workspace == "library":
+        render_library_workspace(entries)
+    elif workspace == "analysis":
+        render_analysis_workspace(entries)
+    elif workspace == "zotero":
+        render_zotero_workspace()
 
 
 if __name__ == "__main__":
-    # 配置日志记录
-    logger.remove()  # 移除默认处理器
-    # 只输出到控制台，不记录到文件
-    logger.add(
-        sys.stdout,
-        level="INFO",
-        format="{time:HH:mm:ss} | <level>{level: <8}</level> | {message}",
-        colorize=True,
-    )
-
-    logger.info("=== SmartPaperGUI启动 ===")
-
-    # 创建必要的目录
-    os.makedirs("outputs", exist_ok=True)
-
-    # 配置Streamlit页面
-    st.set_page_config(
-        page_title="SmartPaper", page_icon="📄", layout="wide", initial_sidebar_state="expanded"
-    )
-
-    # 运行主函数
     main()

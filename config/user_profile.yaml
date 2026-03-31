@@ -1,0 +1,29 @@
+# 用户个人科研画像 (User Research Profile)
+# 修改此文件以定制助手的分析偏好
+
+# 基本信息
+user_context:
+  role: "PhD Student"
+  research_area: "Industrial Intelligent Manufacturing"
+  current_project: "Coke oven heating process modeling and collaborative control"
+  
+# 核心关键词 (关注点)
+interests:
+  - "Physics-Informed Machine Learning (PIML)"
+  - "Constrained Optimization"
+  - "Time-delay systems"
+  - "Small sample learning"
+  - "PINN / DeepONet"
+
+# 偏好方法论
+preferred_methods:
+  - "Reinforcement Learning"
+  - "Model Predictive Control (MPC)"
+  - "Hybrid Modeling"
+
+# 分析侧重 (输出报告中会额外增强这些部分)
+analysis_focus:
+  - "Can this method be transferred to coke oven control?"
+  - "Are the constraints handled explicitly?"
+  - "Does it address real-time requirements?"
+  - "Impact on PhD inspiration"

@@ -1,0 +1,12 @@
+tests:
+  - name: "PINN Survey"
+    file_path: "temp/Hao 等 - 2023 - Physics-Informed Machine Learning A Survey on Problems, Methods and Applications.pdf"
+    expected:
+      title_contains: "Physics-Informed Machine Learning"
+      keywords: ["Machine Learning", "Physics"]
+      min_summary_length: 50
+  - name: "Geopolymer Analysis"
+    file_path: "temp/Khan 等 - 2026 - Neural network-based prediction of mechanical properties in high-strength fly ash-based geopolymer m.pdf"
+    expected:
+      title_contains: "Geopolymer"
+      min_innovation_points: 1

@@ -1,0 +1,86 @@
+{
+  "collections": [
+    {
+      "key": "ROOT",
+      "name": "Root"
+    },
+    {
+      "key": "CHILD",
+      "name": "Nested Topic",
+      "parentCollection": "ROOT"
+    },
+    {
+      "key": "ORPHAN",
+      "name": "Orphan Branch",
+      "parentCollection": "MISSING_PARENT"
+    }
+  ],
+  "items": [
+    {
+      "key": "ITEM_DUP_A",
+      "version": 5,
+      "libraryID": 9,
+      "libraryType": "user",
+      "itemType": "journalArticle",
+      "title": "Duplicate DOI Paper",
+      "creators": [
+        {
+          "firstName": "Bo",
+          "lastName": "Li"
+        }
+      ],
+      "date": "2024",
+      "DOI": "10.1000/dup-001",
+      "tags": [],
+      "collections": [
+        "CHILD"
+      ]
+    },
+    {
+      "key": "ITEM_DUP_B",
+      "version": 8,
+      "libraryID": 9,
+      "libraryType": "user",
+      "itemType": "conferencePaper",
+      "title": "Duplicate DOI Paper",
+      "creators": [
+        {
+          "firstName": "Bo",
+          "lastName": "Li"
+        }
+      ],
+      "date": "2024",
+      "DOI": "10.1000/dup-001",
+      "tags": [
+        {
+          "tag": "Needs-Dedup"
+        }
+      ],
+      "collections": [
+        "ORPHAN"
+      ]
+    },
+    {
+      "key": "ITEM_NO_ATTACHMENT",
+      "version": 3,
+      "libraryID": 9,
+      "libraryType": "user",
+      "itemType": "journalArticle",
+      "title": "Metadata Only Entry",
+      "creators": [],
+      "abstractNote": "",
+      "publicationTitle": "",
+      "date": "",
+      "DOI": "",
+      "url": "https://example.com/metadata-only",
+      "tags": [
+        {
+          "tag": "NoPDF"
+        }
+      ],
+      "collections": [
+        "CHILD"
+      ]
+    }
+  ]
+}

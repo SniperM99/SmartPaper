@@ -13,7 +13,7 @@ from loguru import logger
 import pytest
 from core.llm_wrapper import LLMWrapper
 from unittest.mock import MagicMock, patch
-from langchain.schema import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 import yaml
 
 

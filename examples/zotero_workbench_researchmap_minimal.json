@@ -1,0 +1,89 @@
+{
+  "zotero_records": [
+    {
+      "paper_id": "2c6f492be5aa18d9",
+      "title": "Physics-Informed Biomedical Models",
+      "metadata": {
+        "year": 2025,
+        "journal": "AI Journal",
+        "keywords": ["PINN", "Biomedical"]
+      },
+      "tags": [
+        {"name": "PINN", "tag_type": "manual"},
+        {"name": "Biomedical", "tag_type": "automatic"}
+      ],
+      "collections": [
+        {"key": "C2", "name": "PINN", "path": "Survey / PINN", "parent_key": "C1"}
+      ],
+      "analysis_refs": ["saved_analyses/analysis_001.md"],
+      "primary_attachment": {
+        "key": "ATT1",
+        "local_path": "paper.pdf",
+        "is_primary": true
+      },
+      "library_context": {
+        "zotero": {
+          "library_id": "7",
+          "library_type": "user",
+          "item_key": "ITEM1",
+          "version": 21
+        },
+        "tags": [
+          {"name": "PINN", "tag_type": "manual"},
+          {"name": "Biomedical", "tag_type": "automatic"}
+        ],
+        "collections": [
+          {"key": "C2", "name": "PINN", "path": "Survey / PINN", "parent_key": "C1"}
+        ],
+        "attachments": [
+          {"key": "ATT1", "local_path": "paper.pdf", "is_primary": true}
+        ],
+        "sync_state": {
+          "provider": "zotero",
+          "status": "pending",
+          "direction": "import_only",
+          "remote_version": 21
+        },
+        "analysis_refs": ["saved_analyses/analysis_001.md"]
+      }
+    }
+  ],
+  "research_map_seed_cards": [
+    {
+      "paper_id": "2c6f492be5aa18d9",
+      "metadata": {
+        "title": "Physics-Informed Biomedical Models",
+        "year": 2025,
+        "venue": "AI Journal",
+        "keywords": ["PINN", "Biomedical"]
+      },
+      "analysis": {
+        "summary_one_sentence": "A biomedical PINN survey.",
+        "research_problem": "How physics-informed methods support biomedical modeling.",
+        "topic_tags": ["Biomedical PINN"],
+        "method_tags": ["PINN"],
+        "dataset_tags": [],
+        "application_tags": ["Biomedical"],
+        "limitations": ["Limited comparative benchmarks"],
+        "future_work": ["Expand clinical validation"],
+        "method": {
+          "overview": "Survey of physics-informed neural models in biomedical settings."
+        },
+        "experiments": {
+          "datasets": [],
+          "metrics": []
+        }
+      },
+      "library_context": {
+        "tags": [
+          {"name": "PINN", "tag_type": "manual"},
+          {"name": "Biomedical", "tag_type": "automatic"}
+        ],
+        "collections": [
+          {"key": "C2", "name": "PINN", "path": "Survey / PINN", "parent_key": "C1"}
+        ],
+        "analysis_refs": ["saved_analyses/analysis_001.md"]
+      }
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "overview": {
+    "paper_count": 3,
+    "entity_count": 0,
+    "relation_count": 0,
+    "topic_count": 0,
+    "problem_count": 0,
+    "method_count": 0,
+    "dataset_count": 0,
+    "metric_count": 0,
+    "gap_count": 0,
+    "timeline_years": ["2023", "2025", "unknown"],
+    "cluster_count": 0
+  },
+  "entities": [],
+  "relations": [],
+  "timeline": [
+    {"year": "2023", "paper_ids": ["paper-survey-2023"], "key_topics": [], "key_methods": [], "highlights": []},
+    {"year": "2025", "paper_ids": ["paper-zotero-2025"], "key_topics": [], "key_methods": [], "highlights": []},
+    {"year": "unknown", "paper_ids": ["paper-mfg-unknown"], "key_topics": [], "key_methods": [], "highlights": []}
+  ],
+  "clusters": [],
+  "gaps": []
+}

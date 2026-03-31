@@ -1,1 +1,1 @@
-conda activate smartpaper_py310
+./.venv/bin/streamlit run streamlit.app.py
