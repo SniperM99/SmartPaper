@@ -29,6 +29,13 @@
 
 **SmartPaper** 是一个领先的智能论文阅读和分析工具，通过集成多种大语言模型 (LLM) 接口，自动分析学术论文内容并生成高质量的结构化报告。无论您是研究人员、学生还是对最新研究感兴趣的专业人士，SmartPaper 都能帮助您更高效地理解和提炼复杂的学术内容。
 
+### 🏗️ 架构说明
+
+SmartPaper 采用前后端分离架构：
+- **后端**: FastAPI RESTful API 服务，提供核心功能接口
+- **前端**: Vue.js 现代化 Web 界面（开发中）
+- **核心层**: 论文分析、文献管理、研究地图等核心逻辑
+
 > **注意**：项目当前处于高速迭代阶段，API 可能会发生变动。架构稳定后将尽量避免核心代码变更。
 
 ## ✨ 功能特点
@@ -139,9 +146,45 @@ python cli_get_prompt_mode_paper_stream.py https://arxiv.org/pdf/2312.12456.pdf
 
 #### 启动图形界面
 
+**Streamlit 界面（传统方式）**:
+
 ```bash
 streamlit run streamlit.app.py
 ```
+
+**FastAPI 后端 + Vue 前端（新架构）**:
+
+**方法一：一键启动（推荐）**:
+
+```bash
+cd /Users/m99/Documents/SmartPaper
+./start_all.sh
+```
+
+此脚本会自动：
+- 检查并安装前端依赖（如果缺失）
+- 启动后端服务 (http://localhost:8000)
+- 启动前端服务 (http://localhost:3000)
+
+**方法二：分别启动**:
+
+```bash
+# 1. 启动后端服务
+cd backend
+./start.sh
+# 或
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+# 2. 启动前端
+cd vue-frontend
+npm install  # 首次运行需要安装依赖
+npm run dev
+```
+
+> 💡 **常见问题**: 如果遇到 `vite: command not found` 错误，请先运行 `./install_frontend.sh` 安装前端依赖，或者直接使用 `./start_all.sh` 一键启动。
+> 详细故障排除请查看：[故障排除指南](TROUBLESHOOTING.md)
+
+> 详细说明请参考：[FastAPI 后端文档](docs/FASTAPI_MIGRATION.md)
 
 ## 📚 详细文档
 

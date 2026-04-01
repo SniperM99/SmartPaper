@@ -498,35 +498,76 @@ def render_compare_panel(compare_entries: List[Dict[str, Any]]) -> None:
 
 def render_research_map_panel(active_entry: Optional[Dict[str, Any]], entries: List[Dict[str, Any]], compare_entries: List[Dict[str, Any]]) -> None:
     st.subheader("研究映射")
+
+    # 视图模式选择
+    view_mode = st.radio(
+        "视图模式",
+        options=["Vue 交互式图谱", "简化统计"],
+        horizontal=True,
+        key="research_map_view_mode"
+    )
+
     scope_entries = research_map_scope(entries, active_entry, compare_entries)
     if not scope_entries:
         st.info("暂无可用于映射的论文。")
         return
 
-    years: Dict[str, int] = {}
-    method_tags: Dict[str, int] = {}
-    dataset_tags: Dict[str, int] = {}
-    app_tags: Dict[str, int] = {}
-    for entry in scope_entries:
-        years[str(entry.get("year", "未知"))] = years.get(str(entry.get("year", "未知")), 0) + 1
-        for tag in entry.get("method_tags", []):
-            method_tags[tag] = method_tags.get(tag, 0) + 1
-        for tag in entry.get("dataset_tags", []):
-            dataset_tags[tag] = dataset_tags.get(tag, 0) + 1
-        for tag in entry.get("application_tags", []):
-            app_tags[tag] = app_tags.get(tag, 0) + 1
+    # Vue 交互式图谱模式
+    if view_mode == "Vue 交互式图谱":
+        try:
+            # 启动 API 服务器
+            from infrastructure.research_map_api import start_api_server
+            api_server = start_api_server(host="127.0.0.1", port=8001)
+            st.success("🚀 研究地图 API 服务已启动")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("**时间线分布**")
-        st.json(dict(sorted(years.items())))
-        st.markdown("**方法主题**")
-        st.json(dict(sorted(method_tags.items(), key=lambda x: x[1], reverse=True)[:12]))
-    with col2:
-        st.markdown("**数据主题**")
-        st.json(dict(sorted(dataset_tags.items(), key=lambda x: x[1], reverse=True)[:12]))
-        st.markdown("**应用主题**")
-        st.json(dict(sorted(app_tags.items(), key=lambda x: x[1], reverse=True)[:12]))
+            # 构造论文缓存键列表
+            cache_keys = [entry["cache_key"] for entry in scope_entries if "cache_key" in entry]
+
+            # 显示 Vue 组件
+            vue_html = f"""
+            <div id="smartpaper-research-map" style="width:100%;height:700px;">
+                <iframe
+                    src="http://127.0.0.1:5173?cacheKeys={','.join(cache_keys)}"
+                    width="100%"
+                    height="700px"
+                    style="border:none;border-radius:8px;"
+                    frameborder="0">
+                </iframe>
+            </div>
+            """
+            st.components.v1.html(vue_html, height=750, scrolling=False)
+
+            st.info("💡 提示：如果 Vue 图谱无法加载，请确保已启动 Vue 开发服务器（cd vue-frontend && npm run dev）")
+
+        except Exception as e:
+            st.error(f"Vue 图谱加载失败: {e}")
+            st.info("回退到简化统计模式")
+
+    # 简化统计模式（原有逻辑）
+    if view_mode == "简化统计":
+        years: Dict[str, int] = {}
+        method_tags: Dict[str, int] = {}
+        dataset_tags: Dict[str, int] = {}
+        app_tags: Dict[str, int] = {}
+        for entry in scope_entries:
+            years[str(entry.get("year", "未知"))] = years.get(str(entry.get("year", "未知")), 0) + 1
+            for tag in entry.get("method_tags", []):
+                method_tags[tag] = method_tags.get(tag, 0) + 1
+            for tag in entry.get("dataset_tags", []):
+                dataset_tags[tag] = dataset_tags.get(tag, 0) + 1
+            for tag in entry.get("application_tags", []):
+                app_tags[tag] = app_tags.get(tag, 0) + 1
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("**时间线分布**")
+            st.json(dict(sorted(years.items())))
+            st.markdown("**方法主题**")
+            st.json(dict(sorted(method_tags.items(), key=lambda x: x[1], reverse=True)[:12]))
+        with col2:
+            st.markdown("**数据主题**")
+            st.json(dict(sorted(dataset_tags.items(), key=lambda x: x[1], reverse=True)[:12]))
+            st.markdown("**应用主题**")
+            st.json(dict(sorted(app_tags.items(), key=lambda x: x[1], reverse=True)[:12]))
 
     if active_entry:
         st.markdown("---")
